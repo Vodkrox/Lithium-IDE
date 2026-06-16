@@ -1,6 +1,9 @@
 # Cache directory
 .cache/
 
+# Local model downloads
+.models/
+
 # Python caching
 __pycache__/
 *.pyc

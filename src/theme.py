@@ -223,12 +223,28 @@ def style_toolbar_button(button):
     button.bind("<Enter>", on_enter)
     button.bind("<Leave>", on_leave)
 
+def _invert_hex_color(color):
+    if not isinstance(color, str) or not color.startswith("#"):
+        return "#ffffff"
+    hex_value = color.lstrip("#")
+    if len(hex_value) != 6:
+        return "#ffffff"
+    try:
+        r = 255 - int(hex_value[0:2], 16)
+        g = 255 - int(hex_value[2:4], 16)
+        b = 255 - int(hex_value[4:6], 16)
+        return f"#{r:02x}{g:02x}{b:02x}"
+    except ValueError:
+        return "#ffffff"
+
+
 def style_menu(menu):
     menu.config(
         bg=COLORS["bg_header"],
         fg=COLORS["fg_light"],
         activebackground=COLORS["accent"],
         activeforeground=COLORS["bg_dark"],
+        selectcolor=_invert_hex_color(COLORS["bg_header"]),
         bd=1,
         relief=tk.FLAT
     )
