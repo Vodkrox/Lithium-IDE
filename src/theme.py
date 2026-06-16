@@ -138,12 +138,9 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
         highlightthickness=0
     )
 
+    # status_bar is now a Frame, so we only configure bg
     status_bar.config(
         bg=COLORS["bg_header"],
-        fg=COLORS["fg_dim"],
-        font=FONTS["ui"],
-        padx=12,
-        pady=4,
         bd=0,
         relief=tk.FLAT
     )

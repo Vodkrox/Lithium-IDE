@@ -9,11 +9,14 @@ _model_cache = {}
 # Use the `hf://<repo_id>` scheme to let Lithium download from Hugging Face directly.
 # Replace <REPO_ID> with the official Hugging Face repo id you intend to use.
 MODEL_CANDIDATES = [
-    ("Qwen2.5-Coder-1.5B", "hf://Qwen/Qwen2.5-Coder-1.5B"),
+    ("Qwen2.5-Coder-7B-GGUF", "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf"),
 ]
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a programming assistant that responds in English."
+    "You are a helpful programming assistant. You help users write, edit, and understand code. "
+    "You respond in the same language the user uses (English, Spanish, etc.). "
+    "You are concise and clear in your responses. "
+    "You have special skills to modify code and files when needed - use them when the user asks you to make changes."
 )
 
 
@@ -48,6 +51,14 @@ def resolve_model_source(source):
     if not source:
         raise ValueError("No AI model source has been configured.")
 
+    if source.startswith("hf://"):
+        repo_id = source[len("hf://"):]
+        model_name = repo_id.replace("/", "-")
+        target_dir = os.path.join(".models", model_name)
+        if os.path.exists(target_dir):
+            return target_dir
+        raise FileNotFoundError(f"Model has not been downloaded yet. Please download it from the AI menu.")
+
     if source.startswith("http://") or source.startswith("https://"):
         return _download_model_url(source)
 
@@ -69,9 +80,20 @@ def _download_model_url(url, progress_callback=None):
         os.makedirs(target_dir, exist_ok=True)
 
         try:
-            from huggingface_hub import HfApi, HfFolder
+            from huggingface_hub import HfApi, get_token
         except Exception:
-            raise RuntimeError("The 'huggingface_hub' package is required to download from Hugging Face. Install it with 'pip install huggingface_hub'")
+            import subprocess
+            import sys
+            import importlib
+            try:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "huggingface_hub"])
+                importlib.invalidate_caches()
+                from huggingface_hub import HfApi, get_token
+            except Exception as e:
+                raise RuntimeError(
+                    f"The 'huggingface_hub' package is required to download from Hugging Face. "
+                    f"Failed to install it automatically: {e}. Install it manually with 'pip install huggingface_hub'"
+                )
 
         api = HfApi()
         revision = "main"
@@ -100,7 +122,7 @@ def _download_model_url(url, progress_callback=None):
 
         headers = {"User-Agent": "Mozilla/5.0"}
         try:
-            token = HfFolder.get_token()
+            token = get_token()
             if token:
                 headers["Authorization"] = f"Bearer {token}"
         except Exception:
@@ -186,76 +208,9 @@ def download_model_url(url, progress_callback=None):
     return _download_model_url(url, progress_callback=progress_callback)
 
 
-def list_model_candidates(link_file):
-    """Return a list of model candidates from the link file.
-
-    Each entry is a tuple (name, url). If name cannot be derived, url is used as name.
-    """
-    candidates = []
-    if not os.path.exists(link_file):
-        # fallback to built-in candidates
-        # Always return exactly one candidate (the built-in first entry).
-        return [MODEL_CANDIDATES[0]] if MODEL_CANDIDATES else []
-
-    with open(link_file, "r", encoding="utf-8") as f:
-        for line in f:
-            entry = line.strip()
-            if not entry or entry.startswith("#"):
-                continue
-            for part in entry.split(","):
-                part = part.strip()
-                if not part:
-                    continue
-                part = part.split("/=")[0]
-                candidate = part.rstrip(".,;\n\r")
-                if candidate:
-                    # derive a display name from path
-                    name = os.path.splitext(os.path.basename(candidate))[0] or candidate
-                    candidates.append((name, candidate))
-    # Only expose a single candidate to the UI: prefer file entry but return first only.
-    if candidates:
-        return [candidates[0]]
+def list_model_candidates():
+    """Return a list of model candidates."""
     return [MODEL_CANDIDATES[0]] if MODEL_CANDIDATES else []
-
-
-def load_model_source(link_file):
-    if not os.path.exists(link_file):
-        # fallback to first built-in candidate
-        if MODEL_CANDIDATES:
-            return MODEL_CANDIDATES[0][1]
-        return None
-
-    with open(link_file, "r", encoding="utf-8") as f:
-        for line in f:
-            entry = line.strip()
-            if not entry or entry.startswith("#"):
-                continue
-            for part in entry.split(","):
-                part = part.strip()
-                if not part:
-                    continue
-                part = part.split("/=")[0]
-                candidate = part.rstrip(".,;\n\r")
-                if candidate.startswith("http://") or candidate.startswith("https://") or candidate.startswith("file://") or os.path.exists(candidate):
-                    return candidate
-    return None
-
-
-def load_system_prompt(prompt_file):
-    if not os.path.exists(prompt_file):
-        return DEFAULT_SYSTEM_PROMPT
-    with open(prompt_file, "r", encoding="utf-8") as f:
-        return f.read().strip()
-
-
-def save_model_settings(link_file, prompt_file, model_source, system_prompt):
-    os.makedirs(os.path.dirname(link_file), exist_ok=True)
-    with open(link_file, "w", encoding="utf-8") as f:
-        f.write(model_source.strip() + "\n")
-
-    os.makedirs(os.path.dirname(prompt_file), exist_ok=True)
-    with open(prompt_file, "w", encoding="utf-8") as f:
-        f.write(system_prompt.strip() + "\n")
 
 
 def get_runtime_status():
@@ -276,14 +231,21 @@ def _generate_with_llama_cpp(model_path, prompt, max_tokens=256):
         raise RuntimeError("The llama-cpp backend is not installed.")
 
     if model_path not in _model_cache:
-        _model_cache[model_path] = Llama(model_path=model_path)
+        # Optimize for speed while utilizing model capacity
+        _model_cache[model_path] = Llama(
+            model_path=model_path,
+            n_ctx=8192,  # Good balance of speed and context
+            n_batch=512,  # Larger batch for speed
+            verbose=False
+        )
 
     llm = _model_cache[model_path]
-    response = llm.create(
+    response = llm(
         prompt=prompt,
         max_tokens=max_tokens,
-        temperature=0.7,
-        top_p=0.9,
+        temperature=0.5,  # Lower temperature for faster, more focused responses
+        top_p=0.85,
+        repeat_penalty=1.1,
     )
 
     if isinstance(response, dict):
@@ -340,30 +302,35 @@ def generate_text_from_model(model_source, system_prompt, user_prompt, max_token
         prompt_text += "\n\n"
     prompt_text += user_prompt.strip()
 
-    runtime = get_runtime_status()
-    if runtime == "llama_cpp":
-        return _generate_with_llama_cpp(resolved_source, prompt_text, max_tokens=max_tokens)
+    # Determine if the resolved model is a GGUF file or contains one
+    is_gguf = False
+    gguf_path = None
+    if os.path.isfile(resolved_source) and resolved_source.endswith(".gguf"):
+        is_gguf = True
+        gguf_path = resolved_source
+    elif os.path.isdir(resolved_source):
+        for f in os.listdir(resolved_source):
+            if f.endswith(".gguf"):
+                is_gguf = True
+                gguf_path = os.path.join(resolved_source, f)
+                break
 
-    if runtime == "transformers":
+    if is_gguf:
+        llama_cpp = _safe_import_llama_cpp()
+        if llama_cpp is None:
+            raise RuntimeError(
+                "The model is a GGUF model, but llama-cpp-python is not installed. "
+                "Install it to run this model."
+            )
+        return _generate_with_llama_cpp(gguf_path, prompt_text, max_tokens=max_tokens)
+    else:
+        transformers_impl = _safe_import_transformers()
+        if transformers_impl is None:
+            raise RuntimeError(
+                "The model is a Safetensors/PyTorch model, but transformers and torch are not installed. "
+                "Install them or download a GGUF model (.gguf) to use with llama-cpp-python."
+            )
         return _generate_with_transformers(resolved_source, prompt_text, max_tokens=max_tokens)
 
-    raise RuntimeError(
-        "No local backend is installed to run the model. "
-        "Install llama-cpp or transformers and torch in your Python environment."
-    )
 
 
-def ensure_ai_files(link_file, prompt_file):
-    os.makedirs(os.path.dirname(link_file), exist_ok=True)
-    if not os.path.exists(link_file):
-        with open(link_file, "w", encoding="utf-8") as f:
-            f.write("# Model candidates (name, url)\n")
-            # Write only the single built-in candidate.
-            if MODEL_CANDIDATES:
-                name, url = MODEL_CANDIDATES[0]
-                f.write(f"{name}, {url}\n")
-
-    os.makedirs(os.path.dirname(prompt_file), exist_ok=True)
-    if not os.path.exists(prompt_file):
-        with open(prompt_file, "w", encoding="utf-8") as f:
-            f.write(DEFAULT_SYSTEM_PROMPT + "\n")
