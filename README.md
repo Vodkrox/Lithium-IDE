@@ -1,5 +1,5 @@
 # Lithium-IDE
-An extremely simple Python IDE built with Tkinter.
+An extremely simple Python IDE built with Tkinter. (AI features coming soon)
 
 ## Features
 - **File operations**: Create new files, open existing files, save, and save as.
