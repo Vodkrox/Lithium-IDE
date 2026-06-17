@@ -8,7 +8,6 @@ Open Source **AI IDE** that runs **fully locally**.
 ![Open Source](https://img.shields.io/badge/Open_Source-Yes-success)
 ![Local AI](https://img.shields.io/badge/AI-100%25_Local-purple)
 ![No Telemetry](https://img.shields.io/badge/Telemetry-None-success)
-![Privacy](https://img.shields.io/badge/Privacy-First-success)
 ![Status](https://img.shields.io/badge/Status-Beta-orange)
 [![Release](https://img.shields.io/github/v/release/Vodkrox/Lithium-IDE?label=Release&logo=github&color=brightgreen)](https://github.com/Vodkrox/Lithium-IDE/releases)
 
