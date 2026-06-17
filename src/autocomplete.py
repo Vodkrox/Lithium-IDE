@@ -7,10 +7,10 @@ class LithiumAutocompleteManager:
         self.editor = editor
         self.selected_lang = selected_lang
         self.check_callback = check_callback
-        
+
         self.autocomplete_win = None
         self.autocomplete_listbox = None
-        
+
         self.editor.bind("<KeyPress>", self.on_editor_keypress)
         self.editor.bind("<Control-space>", lambda event: self.check_autocomplete(event))
 
@@ -49,7 +49,7 @@ class LithiumAutocompleteManager:
 
     def check_autocomplete(self, event=None):
         if event:
-            if event.keysym in ("Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R", 
+            if event.keysym in ("Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R",
                                "Up", "Down", "Left", "Right", "Return", "Tab", "Escape", "BackSpace"):
                 if event.keysym == "BackSpace":
                     self.update_autocomplete_suggestions()
@@ -71,7 +71,7 @@ class LithiumAutocompleteManager:
 
         content = self.editor.get(1.0, tk.END)
         all_words = set(re.findall(r'[a-zA-Z_]\w*', content))
-        
+
         lang = self.selected_lang.get()
         keywords = {
             "Python": ["print", "def", "class", "import", "from", "return", "if", "else", "elif", "for", "while", "try", "except", "with", "as", "True", "False", "None", "self", "lambda", "yield", "pass", "break", "continue", "in", "is", "not", "and", "or", "range", "len", "list", "dict", "set", "str", "int", "float"],
@@ -79,7 +79,7 @@ class LithiumAutocompleteManager:
             "TypeScript": ["console.log", "function", "const", "let", "var", "return", "if", "else", "for", "while", "try", "catch", "class", "import", "export", "from", "true", "false", "null", "undefined", "this", "new", "async", "await", "interface", "type", "string", "number", "boolean", "any", "void"]
         }
         lang_keywords = keywords.get(lang, [])
-        
+
         suggestions = sorted(list((all_words | set(lang_keywords)) - {word}))
         matches = [s for s in suggestions if s.lower().startswith(word.lower())]
 
@@ -93,7 +93,7 @@ class LithiumAutocompleteManager:
             self.autocomplete_listbox = tk.Listbox(self.autocomplete_win, bd=0, highlightthickness=1)
             self.autocomplete_listbox.pack(fill=tk.BOTH, expand=True)
             theme.style_autocomplete(self.autocomplete_win, self.autocomplete_listbox)
-            
+
             self.autocomplete_listbox.bind("<Double-Button-1>", lambda e: self.insert_autocomplete())
 
         self.autocomplete_listbox.delete(0, tk.END)

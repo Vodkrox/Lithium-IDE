@@ -1,22 +1,38 @@
 import os
+import sys
 import urllib.request
 from urllib.parse import urlparse
 
+
+def _get_appdata_dir():
+    """Return the LithiumIDE appdata directory."""
+    if sys.platform == "win32":
+        base = os.getenv("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
+    elif sys.platform == "darwin":
+        base = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+    else:
+        base = os.getenv("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "LithiumIDE")
+
+
+def get_models_dir():
+    """Return the path to the models storage directory inside appdata."""
+    return os.path.join(_get_appdata_dir(), "models")
+
 _model_cache = {}
 
-# Hardcoded single built-in model (only one option will be offered).
-# Edit these values here to change the built-in model candidate and prompt.
-# Use the `hf://<repo_id>` scheme to let Lithium download from Hugging Face directly.
-# Replace <REPO_ID> with the official Hugging Face repo id you intend to use.
 MODEL_CANDIDATES = [
     ("Qwen2.5-Coder-7B-GGUF", "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf"),
 ]
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a helpful programming assistant. You help users write, edit, and understand code. "
+    "You are a code-editing assistant inside Lithium IDE. "
     "You respond in the same language the user uses (English, Spanish, etc.). "
-    "You are concise and clear in your responses. "
-    "You have special skills to modify code and files when needed - use them when the user asks you to make changes."
+    "When the user asks you to change the current file, you MUST output only executable skill XML tags, not explanations. "
+    "If the current file contains invalid syntax or unrelated text, fix it by deleting/replacing lines before adding new code. "
+    "If needed, replace the entire file content using replace_file when the current content is not salvageable. "
+    "Never answer with meta-instructions like 'XML tags must be well-formed' or 'Propose the changes'; emit the actual <skill> blocks instead. "
+    "Be concise."
 )
 
 
@@ -34,7 +50,18 @@ def _safe_import_llama_cpp():
         from llama_cpp import Llama
         return Llama
     except Exception:
-        return None
+        pass
+
+    if getattr(sys, "frozen", False):
+        from src.utils import extend_path_with_external_site_packages
+        extend_path_with_external_site_packages()
+        try:
+            from llama_cpp import Llama
+            return Llama
+        except Exception:
+            pass
+
+    return None
 
 
 def _normalize_source(source):
@@ -54,7 +81,7 @@ def resolve_model_source(source):
     if source.startswith("hf://"):
         repo_id = source[len("hf://"):]
         model_name = repo_id.replace("/", "-")
-        target_dir = os.path.join(".models", model_name)
+        target_dir = os.path.join(get_models_dir(), model_name)
         if os.path.exists(target_dir):
             return target_dir
         raise FileNotFoundError(f"Model has not been downloaded yet. Please download it from the AI menu.")
@@ -69,24 +96,23 @@ def resolve_model_source(source):
 
 
 def _download_model_url(url, progress_callback=None):
-    # Hugging Face scheme: hf://<repo_id>
     if url.startswith("hf://"):
         repo_id = url[len("hf://"):]
         if not repo_id:
             raise ValueError("Hugging Face repo id not provided in hf:// URL")
 
         model_name = repo_id.replace("/", "-")
-        target_dir = os.path.join(".models", model_name)
+        target_dir = os.path.join(get_models_dir(), model_name)
         os.makedirs(target_dir, exist_ok=True)
 
         try:
             from huggingface_hub import HfApi, get_token
         except Exception:
             import subprocess
-            import sys
             import importlib
+            from src.utils import get_python_executable
             try:
-                subprocess.check_call([sys.executable, "-m", "pip", "install", "huggingface_hub"])
+                subprocess.check_call([get_python_executable(), "-m", "pip", "install", "huggingface_hub"])
                 importlib.invalidate_caches()
                 from huggingface_hub import HfApi, get_token
             except Exception as e:
@@ -163,7 +189,6 @@ def _download_model_url(url, progress_callback=None):
 
         return target_dir
 
-    # HTTP/HTTPS download (file-level)
     parsed = urlparse(url)
     file_name = os.path.basename(parsed.path) or parsed.netloc
     file_name = file_name.split("/")[0]
@@ -171,7 +196,7 @@ def _download_model_url(url, progress_callback=None):
         file_name = "model.bin"
 
     model_name = os.path.splitext(file_name)[0]
-    target_dir = os.path.join(".models", model_name)
+    target_dir = os.path.join(get_models_dir(), model_name)
     os.makedirs(target_dir, exist_ok=True)
     target_path = os.path.join(target_dir, file_name)
 
@@ -222,6 +247,26 @@ def get_runtime_status():
     if transformers_impl is not None:
         return "transformers"
 
+    from src.utils import can_import_module
+    if can_import_module("llama_cpp"):
+        return "llama_cpp"
+    if can_import_module("transformers"):
+        return "transformers"
+
+    return None
+
+
+def find_local_model():
+    """Return the path to a previously downloaded local model, if any."""
+    models_dir = get_models_dir()
+    if not os.path.isdir(models_dir):
+        return None
+
+    for root, _, files in os.walk(models_dir):
+        for filename in files:
+            if filename.endswith(".gguf"):
+                return os.path.join(root, filename)
+
     return None
 
 
@@ -231,11 +276,10 @@ def _generate_with_llama_cpp(model_path, prompt, max_tokens=256):
         raise RuntimeError("The llama-cpp backend is not installed.")
 
     if model_path not in _model_cache:
-        # Optimize for speed while utilizing model capacity
         _model_cache[model_path] = Llama(
             model_path=model_path,
-            n_ctx=8192,  # Good balance of speed and context
-            n_batch=512,  # Larger batch for speed
+            n_ctx=8192,
+            n_batch=512,
             verbose=False
         )
 
@@ -243,9 +287,10 @@ def _generate_with_llama_cpp(model_path, prompt, max_tokens=256):
     response = llm(
         prompt=prompt,
         max_tokens=max_tokens,
-        temperature=0.5,  # Lower temperature for faster, more focused responses
+        temperature=0.5,
         top_p=0.85,
         repeat_penalty=1.1,
+        stop=["<|im_end|>", "<|im_start|>user", "<|im_start|>system"],
     )
 
     if isinstance(response, dict):
@@ -288,21 +333,36 @@ def _generate_with_transformers(model_path, prompt, max_tokens=256):
         top_p=0.9,
         temperature=0.7,
     )
-    output = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    generated_ids = outputs[0][input_ids.shape[-1]:]
+    output = tokenizer.decode(generated_ids, skip_special_tokens=True)
     return output.strip()
 
 
-def generate_text_from_model(model_source, system_prompt, user_prompt, max_tokens=256):
+def _format_chat_prompt(system_prompt, user_prompt):
+    """Format prompts for instruct/chat-tuned models such as Qwen Coder.
+
+    The previous plain concatenation made some instruction models echo policy-like
+    guidance instead of producing the requested XML skill tags. Qwen GGUF models
+    work much better with the ChatML format below.
+    """
+    return (
+        "<|im_start|>system\n"
+        f"{system_prompt.strip()}\n"
+        "<|im_end|>\n"
+        "<|im_start|>user\n"
+        f"{user_prompt.strip()}\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
+
+
+def generate_text_from_model(model_source, system_prompt, user_prompt, max_tokens=512):
     resolved_source = resolve_model_source(model_source)
     if not resolved_source:
         raise RuntimeError("Could not resolve the AI model path.")
 
-    prompt_text = system_prompt.strip()
-    if prompt_text:
-        prompt_text += "\n\n"
-    prompt_text += user_prompt.strip()
+    prompt_text = _format_chat_prompt(system_prompt, user_prompt)
 
-    # Determine if the resolved model is a GGUF file or contains one
     is_gguf = False
     gguf_path = None
     if os.path.isfile(resolved_source) and resolved_source.endswith(".gguf"):
@@ -331,6 +391,5 @@ def generate_text_from_model(model_source, system_prompt, user_prompt, max_token
                 "Install them or download a GGUF model (.gguf) to use with llama-cpp-python."
             )
         return _generate_with_transformers(resolved_source, prompt_text, max_tokens=max_tokens)
-
 
 

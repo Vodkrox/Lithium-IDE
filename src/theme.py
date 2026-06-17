@@ -3,19 +3,28 @@ import json
 import tkinter as tk
 from tkinter import ttk
 
-# Fallback default theme in case loading JSON fails
-DEFAULT_CATPPUCCIN = {
-    "bg_dark": "#181825",
-    "bg_editor": "#1e1e2e",
-    "bg_header": "#11111b",
-    "fg_light": "#cdd6f4",
-    "fg_dim": "#a6adc8",
-    "accent": "#cba6f7",
-    "accent_hover": "#b4befe",
-    "console_bg": "#11111b",
-    "console_fg": "#a6e3a1",
-    "console_err": "#f38ba8",
-    "sash_color": "#313244"
+DEFAULT_GRAPHITE = {
+  "bg_dark": "#000000",
+  "bg_editor": "#080808",
+  "bg_header": "#000000",
+
+  "fg_light": "#FFFFFF",
+  "fg_dim": "#7D8794",
+
+  "accent": "#4DA3FF",
+  "accent_hover": "#2F7DD1",
+
+  "console_bg": "#080808",
+  "console_fg": "#E6EDF3",
+  "console_err": "#FF5C5C",
+
+  "sash_color": "#000000",
+  "selection_bg": "#1A1A1A",
+
+  "line_number_fg": "#4B5563",
+
+  "success": "#7EE787",
+  "error": "#FF5C5C"
 }
 
 THEMES = {}
@@ -33,14 +42,40 @@ def load_themes():
                         THEMES[theme_name] = json.load(f)
                 except Exception:
                     pass
-    if "Catppuccin (Default)" not in THEMES:
-        THEMES["Catppuccin (Default)"] = DEFAULT_CATPPUCCIN
+    if "Graphite" not in THEMES:
+        THEMES["Graphite (Default)"] = DEFAULT_GRAPHITE
 
-# Initial load of themes
 load_themes()
 
-CURRENT_THEME = "Catppuccin (Default)"
-COLORS = dict(THEMES.get(CURRENT_THEME, DEFAULT_CATPPUCCIN))
+def _complete_theme(theme_data):
+    """Return a complete color palette for a theme.
+
+    Theme JSON files may omit optional/derived colors.  Keeping this merge in
+    one place prevents old Catppuccin-only values from leaking into another
+    theme when the user switches themes.
+    """
+    theme_data = theme_data or {}
+    complete = dict(DEFAULT_GRAPHITE)
+    complete.update(theme_data)
+
+    if "selection_bg" not in theme_data:
+        complete["selection_bg"] = complete["sash_color"]
+    if "line_number_fg" not in theme_data:
+        complete["line_number_fg"] = complete["fg_dim"]
+    if "success" not in theme_data:
+        complete["success"] = complete["console_fg"]
+    if "error" not in theme_data:
+        complete["error"] = complete["console_err"]
+    return complete
+
+
+def get_color(name, fallback=None):
+    """Read a color from the active theme with a safe fallback."""
+    return COLORS.get(name, fallback if fallback is not None else DEFAULT_GRAPHITE.get(name, "#ffffff"))
+
+
+CURRENT_THEME = "Graphite"
+COLORS = _complete_theme(THEMES.get(CURRENT_THEME, DEFAULT_GRAPHITE))
 
 FONTS = {
     "ui": ("Segoe UI", 10),
@@ -53,7 +88,8 @@ def set_theme(theme_name):
     global CURRENT_THEME
     if theme_name in THEMES:
         CURRENT_THEME = theme_name
-        COLORS.update(THEMES[theme_name])
+        COLORS.clear()
+        COLORS.update(_complete_theme(THEMES[theme_name]))
 
 def apply_theme(root, editor, console, paned_window, editor_label, console_label, line_numbers, status_bar, toolbar=None, toolbar_divider=None):
     root.configure(bg=COLORS["bg_dark"])
@@ -65,7 +101,7 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
 
     style = ttk.Style()
     style.theme_use("clam")
-    
+
     style.configure(
         "TScrollbar",
         gripcount=0,
@@ -104,7 +140,7 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
         bg=COLORS["bg_editor"],
         fg=COLORS["fg_light"],
         insertbackground=COLORS["accent"],
-        selectbackground="#45475a",
+        selectbackground=COLORS["selection_bg"],
         selectforeground=COLORS["fg_light"],
         font=FONTS["editor"],
         padx=10,
@@ -115,7 +151,7 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
 
     line_numbers.config(
         bg=COLORS["bg_header"],
-        fg="#585b70",
+        fg=COLORS["line_number_fg"],
         font=FONTS["editor"],
         padx=8,
         pady=10,
@@ -129,7 +165,7 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
         bg=COLORS["console_bg"],
         fg=COLORS["console_fg"],
         insertbackground=COLORS["accent"],
-        selectbackground="#45475a",
+        selectbackground=COLORS["selection_bg"],
         selectforeground=COLORS["fg_light"],
         font=FONTS["console"],
         padx=12,
@@ -138,7 +174,6 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
         highlightthickness=0
     )
 
-    # status_bar is now a Frame, so we only configure bg
     status_bar.config(
         bg=COLORS["bg_header"],
         bd=0,
@@ -155,13 +190,13 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
 
 def style_search_dialog(dialog, search_entry, listbox, title_label):
     dialog.configure(bg=COLORS["bg_dark"])
-    
+
     title_label.config(
         bg=COLORS["bg_dark"],
         fg=COLORS["accent"],
         font=FONTS["header"]
     )
-    
+
     search_entry.config(
         bg=COLORS["bg_editor"],
         fg=COLORS["fg_light"],
@@ -172,7 +207,7 @@ def style_search_dialog(dialog, search_entry, listbox, title_label):
         highlightbackground=COLORS["sash_color"],
         highlightcolor=COLORS["accent"]
     )
-    
+
     listbox.config(
         bg=COLORS["bg_editor"],
         fg=COLORS["fg_light"],
@@ -216,7 +251,7 @@ def style_toolbar_button(button):
         button.config(bg=COLORS["sash_color"], fg=COLORS["accent"])
     def on_leave(e):
         button.config(bg=COLORS["bg_header"], fg=COLORS["fg_light"])
-    
+
     button.bind("<Enter>", on_enter)
     button.bind("<Leave>", on_leave)
 

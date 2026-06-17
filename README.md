@@ -1,23 +1,24 @@
 # Lithium-IDE
-Open Source AI IDE that runs fully locally. (AI features coming soon)
+Open Source **AI IDE** that runs **fully locally**.
 
-## Features
-- **File operations**: Create new files, open existing files, save, and save as.
-- **Run Python scripts**: Execute the currently open script with `F5` or via the menu, viewing output in the integrated console.
-- **Keyboard shortcuts**:
-  - `Ctrl + N`: New File
-  - `Ctrl + O`: Open File
-  - `Ctrl + S`: Save File
-  - `Ctrl + Shift + P`: Search Language
-  - `Ctrl + Space`: Trigger Autocomplete
-  - `F5`: Run Script
+![banner](/src/assets/lithium_banner.png)
+![screenshot](/src/assets/lithium_screenshot.png)
 
-## Modern Editor Features
-- **Intelligent Autocomplete**: Suggests keywords specific to the selected language and indexes words written in the active document. Select suggestions with `Up`/`Down` arrows and insert with `Tab` or `Enter`.
-- **Auto-bracket Matching**: Automatically inserts closing characters for `(`, `[`, `{`, `'`, and `"`.
+# Purpose
+Provide a fully functional, out-of-the-box AI-powered IDE suitable for everyday development, without relying on paid APIs or third-party servers outside the user's control. It is not designed for Vibe-Coding, but for assistance with the code
 
-## How to Run
-Simply execute:
+# Usage
+You can download the latest version from the [releases tab](https://github.com/Vodkrox/Lithium-IDE/releases). You can also run it yourself with Python. Dependencies will be installed automatically.
+
+# Requirements 
+- Python 3.x
+- pip
+
+## Run from source
 ```bash
+git clone https://github.com/Vodkrox/Lithium-IDE.git
+cd Lithium-IDE
 python base.py
 ```
+# Notes
+This project is not intended for “vibe coding” or fully autonomous generation workflows.

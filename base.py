@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import urllib.request
@@ -6,15 +7,18 @@ from urllib.parse import urlparse
 import json
 import threading
 import os
-
 from src import theme
 from src import runner
 from src.editor import LithiumEditorController
 from src.autocomplete import LithiumAutocompleteManager
+from src.settings import SettingsManager
 from src.ai_powered import ai_engine as ai_runner
 from src.ai_powered.ai_skills import get_executor as get_ai_skills_executor, reset_executor as reset_ai_skills_executor, AISkillResult
 from src.ai_powered.conversation_manager import get_conversation_manager, Conversation
 from src.file_explorer import FileExplorer
+from src.splash import SplashScreen
+from src.utils import resource_path, can_import_module
+
 
 class LithiumIDE:
     def __init__(self, root):
@@ -22,12 +26,41 @@ class LithiumIDE:
         self.root.title("Lithium IDE")
         self.root.geometry("900x650")
 
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Vodkrox.LithiumIDE")
+        except Exception:
+            pass
+        try:
+            icon = tk.PhotoImage(file=resource_path("src/assets/lithium_icon.png"))
+            self.root.iconphoto(True, icon)
+            self._app_icon = icon
+        except Exception:
+            pass
+        try:
+            import ctypes
+            self.root.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            dwm = ctypes.windll.dwmapi
+            value = ctypes.c_int(1)
+            dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(value), ctypes.sizeof(value))
+            black = ctypes.c_int(0x00000000)
+            dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(black), ctypes.sizeof(black))
+            dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(black), ctypes.sizeof(black))
+        except Exception:
+            pass
+
+        self.file_or_folder_opened = False
+
         self.root.after(100, self.check_and_setup_dependencies)
 
-        self.selected_lang = tk.StringVar(value="Python")
+        self.settings_manager = SettingsManager()
+        theme_name = self.settings_manager.get("theme", "Graphite")
+        theme.set_theme(theme_name)
+
+        self.selected_lang = tk.StringVar(value=self.settings_manager.get("language", "Python"))
         self.languages = ["Python", "JavaScript", "HTML", "CSS", "C++", "Java", "Rust", "Go"]
 
-        # Create a modern Toolbar at the top
         self.toolbar = tk.Frame(root, bg=theme.COLORS["bg_header"], height=38)
         self.toolbar.pack(side=tk.TOP, fill=tk.X)
         self.toolbar.pack_propagate(False)
@@ -35,12 +68,10 @@ class LithiumIDE:
         self.toolbar_divider = tk.Frame(root, bg=theme.COLORS["sash_color"], height=1)
         self.toolbar_divider.pack(side=tk.TOP, fill=tk.X)
 
-        # Status bar at bottom (packed before main_paned to ensure visibility)
         self.status_bar = tk.Frame(root, bg=theme.COLORS["bg_header"], height=25)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
         self.status_bar.pack_propagate(False)
-        
-        # Status label (left side)
+
         self.status_label = tk.Label(
             self.status_bar,
             text="",
@@ -50,8 +81,7 @@ class LithiumIDE:
             bg=theme.COLORS["bg_header"]
         )
         self.status_label.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
-        
-        # Conversation dropdown button
+
         self.conv_dropdown_btn = tk.Button(
             self.status_bar,
             text="💬 No conversation",
@@ -66,24 +96,21 @@ class LithiumIDE:
         )
         self.conv_dropdown_btn.pack(side=tk.RIGHT, padx=10)
 
-        # Main horizontal paned window
         self.main_paned = tk.PanedWindow(root, orient=tk.HORIZONTAL)
         self.main_paned.pack(fill=tk.BOTH, expand=1)
 
-        # Create center-right paned window (will contain editor/console + AI chat)
         self.center_right_paned = tk.PanedWindow(self.main_paned, orient=tk.HORIZONTAL)
 
-        # Create vertical paned window for editor and console
         self.paned_window = tk.PanedWindow(self.center_right_paned, orient=tk.VERTICAL)
         self.center_right_paned.add(self.paned_window, minsize=400)
 
         self.editor_frame = tk.Frame(self.paned_window)
         self.editor_label = tk.Label(self.editor_frame, text="EDITOR (PYTHON)")
         self.editor_label.pack(fill=tk.X)
-        
+
         self.editor_scrollbar = ttk.Scrollbar(self.editor_frame)
         self.editor_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         self.line_numbers = tk.Text(
             self.editor_frame,
             width=4,
@@ -91,10 +118,10 @@ class LithiumIDE:
             state=tk.DISABLED
         )
         self.line_numbers.pack(side=tk.LEFT, fill=tk.Y)
-        
+
         self.editor = tk.Text(
-            self.editor_frame, 
-            wrap=tk.NONE, 
+            self.editor_frame,
+            wrap=tk.NONE,
             undo=True
         )
         self.editor.pack(fill=tk.BOTH, expand=1)
@@ -109,8 +136,8 @@ class LithiumIDE:
         self.console_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.console = tk.Text(
-            self.console_frame, 
-            wrap=tk.WORD, 
+            self.console_frame,
+            wrap=tk.WORD,
             yscrollcommand=self.console_scrollbar.set
         )
         self.console.pack(fill=tk.BOTH, expand=1)
@@ -120,38 +147,43 @@ class LithiumIDE:
         self.paned_window.add(self.console_frame, minsize=100)
 
         self.controller = LithiumEditorController(
-            self.root, 
-            self.editor, 
-            self.line_numbers, 
-            self.status_label, 
-            self.selected_lang, 
-            self.editor_label
+            self.root,
+            self.editor,
+            self.line_numbers,
+            self.status_label,
+            self.selected_lang,
+            self.editor_label,
+            on_file_open_callback=self.update_editor_ai_state,
+            require_explorer_open=True,
+            settings_manager=self.settings_manager
         )
-        
+        self.controller.on_dirty_state_changed_callback = self.on_dirty_state_changed
+        self.controller.on_single_file_open_callback = self.hide_explorer
+
         def sync_scroll(*args):
             self.editor.yview(*args)
             self.line_numbers.yview(*args)
-        
+
         self.editor_scrollbar.config(command=sync_scroll)
-        
+
         def on_editor_scroll(*args):
             self.editor_scrollbar.set(*args)
             self.line_numbers.yview_moveto(args[0])
-            
+
         self.editor.config(yscrollcommand=on_editor_scroll)
 
         self.autocomplete = LithiumAutocompleteManager(
-            self.editor, 
+            self.editor,
             self.selected_lang,
             check_callback=self.on_editor_change
         )
 
         theme.apply_theme(
-            self.root, 
-            self.editor, 
-            self.console, 
-            self.paned_window, 
-            self.editor_label, 
+            self.root,
+            self.editor,
+            self.console,
+            self.paned_window,
+            self.editor_label,
             self.console_label,
             self.line_numbers,
             self.status_bar,
@@ -159,22 +191,20 @@ class LithiumIDE:
             self.toolbar_divider
         )
 
-        # Load Assets
         self.icons = {}
         try:
-            self.icons["file"] = tk.PhotoImage(file="src/assets/file.png")
-            self.icons["theme"] = tk.PhotoImage(file="src/assets/theme.png")
-            self.icons["run"] = tk.PhotoImage(file="src/assets/run.png")
-            self.icons["python"] = tk.PhotoImage(file="src/assets/python.png")
-            self.icons["javascript"] = tk.PhotoImage(file="src/assets/javascript.png")
-            self.icons["typescript"] = tk.PhotoImage(file="src/assets/typescript.png")
-            self.icons["html"] = tk.PhotoImage(file="src/assets/html.png")
-            self.icons["css"] = tk.PhotoImage(file="src/assets/css.png")
-            self.icons["generic"] = tk.PhotoImage(file="src/assets/generic.png")
+            self.icons["file"] = tk.PhotoImage(file=resource_path("src/assets/file.png"))
+            self.icons["theme"] = tk.PhotoImage(file=resource_path("src/assets/theme.png"))
+            self.icons["run"] = tk.PhotoImage(file=resource_path("src/assets/run.png"))
+            self.icons["python"] = tk.PhotoImage(file=resource_path("src/assets/python.png"))
+            self.icons["javascript"] = tk.PhotoImage(file=resource_path("src/assets/javascript.png"))
+            self.icons["typescript"] = tk.PhotoImage(file=resource_path("src/assets/typescript.png"))
+            self.icons["html"] = tk.PhotoImage(file=resource_path("src/assets/html.png"))
+            self.icons["css"] = tk.PhotoImage(file=resource_path("src/assets/css.png"))
+            self.icons["generic"] = tk.PhotoImage(file=resource_path("src/assets/generic.png"))
         except Exception:
             pass
 
-        # Populate toolbar buttons
         self.btn_file = tk.Button(self.toolbar, text=" File ▾", image=self.icons.get("file", ""), compound=tk.LEFT, command=self.show_file_menu)
         self.btn_file.pack(side=tk.LEFT, padx=(10, 2), pady=3)
         theme.style_toolbar_button(self.btn_file)
@@ -187,15 +217,21 @@ class LithiumIDE:
         self.btn_ai.pack(side=tk.LEFT, padx=2, pady=3)
         theme.style_toolbar_button(self.btn_ai)
 
-        self.ai_model_link = ai_runner.MODEL_CANDIDATES[0][1] if ai_runner.MODEL_CANDIDATES else ""
+        self.ai_model_link = self._resolve_ai_model_link()
         self.ai_system_prompt = ai_runner.DEFAULT_SYSTEM_PROMPT
-        
-        # Initialize AI Skills Executor
+
         self.ai_skills_executor = None
         self._init_ai_skills()
-        
+
         if self.ai_model_link:
             self.status_label.config(text=f"AI: configured model {self.ai_model_link}")
+
+        try:
+            stop_icon = tk.PhotoImage(width=12, height=12)
+            stop_icon.put("red", to=(0, 0, 11, 11))
+            self.icons["stop"] = stop_icon
+        except Exception:
+            self.icons["stop"] = self.icons.get("run", "")
 
         self.btn_theme = tk.Button(self.toolbar, text=" Theme ▾", image=self.icons.get("theme", ""), compound=tk.LEFT, command=self.show_theme_menu)
         self.btn_theme.pack(side=tk.LEFT, padx=2, pady=3)
@@ -204,6 +240,7 @@ class LithiumIDE:
         self.btn_run = tk.Button(self.toolbar, text=" Run Script", image=self.icons.get("run", ""), compound=tk.LEFT, command=self.run_code)
         self.btn_run.pack(side=tk.LEFT, padx=(20, 2), pady=3)
         theme.style_toolbar_button(self.btn_run)
+        self.script_running = False
 
         self.active_menu = None
 
@@ -216,15 +253,21 @@ class LithiumIDE:
         self.controller.load_cache()
         self.controller.update_line_numbers()
         self.controller.update_status()
+        self.update_editor_ai_state()
 
-        # Update language button icon after loading cache
+        last_folder = self.settings_manager.get("last_folder")
+        if last_folder and os.path.isdir(last_folder):
+            try:
+                self.file_explorer.load_folder(last_folder)
+            except Exception:
+                pass
+
         lang = self.selected_lang.get()
         icon_key = lang.lower()
         if icon_key not in self.icons:
             icon_key = "generic"
         self.btn_lang.config(text=f" {lang} ▾", image=self.icons.get(icon_key, ""))
 
-        # Configure main_paned style
         self.main_paned.config(
             bg=theme.COLORS["bg_dark"],
             bd=0,
@@ -233,7 +276,6 @@ class LithiumIDE:
             sashrelief=tk.FLAT
         )
 
-        # Configure center_right_paned style
         self.center_right_paned.config(
             bg=theme.COLORS["bg_dark"],
             bd=0,
@@ -242,68 +284,60 @@ class LithiumIDE:
             sashrelief=tk.FLAT
         )
 
-        # File Explorer Sidebar Frame (left side)
-        self.explorer_frame = tk.Frame(self.main_paned, bg=theme.COLORS["bg_dark"], width=250)
+        self.explorer_frame = tk.Frame(self.main_paned, bg=theme.COLORS["bg_dark"], width=320)
         self.explorer_frame.pack_propagate(False)
-        
-        # Initialize File Explorer
+
         self.file_explorer = FileExplorer(
             self.explorer_frame,
             self.controller,
             theme.COLORS,
             theme.FONTS
         )
-        self.main_paned.add(self.explorer_frame, minsize=150, width=250)
+        self.main_paned.add(self.explorer_frame, minsize=150, width=320)
 
-        # Add center-right paned window (editor/console + AI chat) to main paned
         self.main_paned.add(self.center_right_paned, minsize=400)
 
-        # Initialize conversation manager
         self.conversation_manager = get_conversation_manager()
         self._conversation_ids = []
         self.current_conversation_label = tk.StringVar(value="No conversation")
-        
-        # AI Chat Sidebar Frame (right side, initially hidden)
+
         self.chat_frame = tk.Frame(self.center_right_paned, bg=theme.COLORS["bg_dark"])
-        
-        # === Chat Panel ===
+
         self.chat_panel = tk.Frame(self.chat_frame, bg=theme.COLORS["bg_dark"])
         self.chat_panel.pack(fill=tk.BOTH, expand=True)
-        
-        # Header frame
+
         self.chat_header = tk.Frame(self.chat_panel, bg=theme.COLORS["bg_header"], height=35)
         self.chat_header.pack(fill=tk.X, side=tk.TOP)
         self.chat_header.pack_propagate(False)
-        
+
         self.chat_header_label = tk.Label(
-            self.chat_header, 
-            text="AI CHAT ASSISTANT", 
-            font=theme.FONTS["header"], 
-            fg=theme.COLORS["fg_dim"], 
+            self.chat_header,
+            text="AI CHAT",
+            font=theme.FONTS["header"],
+            fg=theme.COLORS["fg_dim"],
             bg=theme.COLORS["bg_header"]
         )
         self.chat_header_label.pack(side=tk.LEFT, padx=12, pady=8)
-        
+
         self.chat_close_btn = tk.Button(
-            self.chat_header, 
-            text="✕", 
-            font=("Segoe UI", 10), 
-            fg=theme.COLORS["fg_dim"], 
-            bg=theme.COLORS["bg_header"], 
-            bd=0, 
-            activebackground=theme.COLORS["sash_color"], 
-            activeforeground=theme.COLORS["accent"], 
+            self.chat_header,
+            text="✕",
+            font=("Segoe UI", 10),
+            fg=theme.COLORS["fg_dim"],
+            bg=theme.COLORS["bg_header"],
+            bd=0,
+            activebackground=theme.COLORS["sash_color"],
+            activeforeground=theme.COLORS["accent"],
             command=self.toggle_ai_chat
         )
         self.chat_close_btn.pack(side=tk.RIGHT, padx=10)
-        
-        # Chat history scrollbar
+
         self.chat_scrollbar = ttk.Scrollbar(self.chat_panel)
         self.chat_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         self.chat_history = tk.Text(
-            self.chat_panel, 
-            wrap=tk.WORD, 
+            self.chat_panel,
+            wrap=tk.WORD,
             yscrollcommand=self.chat_scrollbar.set,
             font=theme.FONTS["ui"],
             bg=theme.COLORS["bg_editor"],
@@ -314,19 +348,16 @@ class LithiumIDE:
         self.chat_history.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 5))
         self.chat_scrollbar.config(command=self.chat_history.yview)
         self.chat_history.config(state=tk.DISABLED)
-        # Dictionary to keep track of button frames for each code snippet
         self.button_frames = {}
-        # Dictionary to keep track of start index of each code snippet in chat history
         self.code_indices = {}
 
-        
-        # Input container
+
         self.chat_input_container = tk.Frame(self.chat_panel, bg=theme.COLORS["bg_dark"])
         self.chat_input_container.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=(5, 10))
-        
+
         self.chat_input = tk.Text(
-            self.chat_input_container, 
-            height=3, 
+            self.chat_input_container,
+            height=3,
             wrap=tk.WORD,
             font=theme.FONTS["ui"],
             bg=theme.COLORS["bg_editor"],
@@ -338,21 +369,21 @@ class LithiumIDE:
             highlightcolor=theme.COLORS["accent"]
         )
         self.chat_input.pack(fill=tk.X, side=tk.TOP, pady=(0, 5))
-        
+
         self.chat_button_frame = tk.Frame(self.chat_input_container, bg=theme.COLORS["bg_dark"])
         self.chat_button_frame.pack(fill=tk.X, side=tk.TOP)
-        
+
         self.chat_send_btn = tk.Button(
-            self.chat_button_frame, 
-            text="Send", 
+            self.chat_button_frame,
+            text="Send",
             command=self.send_chat_message
         )
         self.chat_send_btn.pack(side=tk.RIGHT)
         theme.style_toolbar_button(self.chat_send_btn)
-        
+
         self.chat_clear_btn = tk.Button(
-            self.chat_button_frame, 
-            text="Clear", 
+            self.chat_button_frame,
+            text="Clear",
             command=self.clear_chat
         )
         self.chat_clear_btn.pack(side=tk.LEFT)
@@ -364,9 +395,38 @@ class LithiumIDE:
         threading.Thread(target=self.load_languages_async, daemon=True).start()
 
     def on_editor_change(self, event=None):
+        if self.controller.editor.edit_modified():
+            self.controller.mark_dirty()
         self.controller.update_line_numbers()
         self.controller.update_status()
         self.autocomplete.check_autocomplete(event)
+
+    def on_dirty_state_changed(self, file_path, is_dirty):
+        current_name = os.path.basename(file_path) if file_path else "Untitled"
+        status_text = f"{current_name}{' *' if is_dirty else ''}"
+        self.status_label.config(text=status_text)
+        if hasattr(self, 'file_explorer') and self.file_explorer:
+            explorer_marker = " • Unsaved" if is_dirty else ""
+            self.file_explorer.header_label.config(text=f"EXPLORER{explorer_marker}")
+            try:
+                self.file_explorer.mark_file_dirty(file_path, is_dirty)
+            except Exception:
+                pass
+
+    def on_app_close(self):
+        if self.controller.has_unsaved_changes:
+            answer = messagebox.askyesnocancel(
+                "Unsaved Changes",
+                "You have unsaved changes. Do you want to save before closing?"
+            )
+            if answer is None:
+                return
+            if answer:
+                saved = self.controller.save_file()
+                if not saved:
+                    messagebox.showerror("Save Error", "Unable to save the file. Close canceled.")
+                    return
+        self.root.destroy()
 
     def show_file_menu(self):
         self.close_menus()
@@ -427,7 +487,7 @@ class LithiumIDE:
         self.file_menu.add_command(label="Save", command=self.controller.save_file, accelerator="Ctrl+S")
         self.file_menu.add_command(label="Save As", command=self.controller.save_as_file)
         self.file_menu.add_separator()
-        self.file_menu.add_command(label="Exit", command=self.root.quit)
+        self.file_menu.add_command(label="Exit", command=self.on_app_close)
 
         self.lang_menu = tk.Menu(self.root, tearoff=0)
         theme.style_menu(self.lang_menu)
@@ -448,13 +508,16 @@ class LithiumIDE:
         self.root.bind("<F5>", lambda event: self.run_code())
         self.root.bind("<Control-Shift-P>", lambda event: self.show_search_dialog())
         self.root.bind("<Control-Shift-p>", lambda event: self.show_search_dialog())
+        self.root.protocol("WM_DELETE_WINDOW", self.on_app_close)
+
+        self.update_editor_ai_state()
 
     def build_languages_menu(self):
         self.lang_menu.delete(0, tk.END)
 
         self.lang_menu.add_command(
-            label="Search Language...", 
-            command=self.show_search_dialog, 
+            label="Search Language...",
+            command=self.show_search_dialog,
             accelerator="Ctrl+Shift+P"
         )
         self.lang_menu.add_separator()
@@ -477,7 +540,7 @@ class LithiumIDE:
             first_char = lang[0].upper()
             if not first_char.isalpha():
                 first_char = "#"
-            
+
             if first_char in "ABC":
                 group_name = "A - C"
             elif first_char in "DEF":
@@ -504,8 +567,8 @@ class LithiumIDE:
             theme.style_menu(sub)
             for lang in groups[group_title]:
                 sub.add_radiobutton(
-                    label=lang, 
-                    variable=self.selected_lang, 
+                    label=lang,
+                    variable=self.selected_lang,
                     value=lang,
                     command=self.on_language_select
                 )
@@ -524,14 +587,6 @@ class LithiumIDE:
     def build_ai_menu(self):
         self.ai_menu.delete(0, tk.END)
         self.ai_menu.add_command(
-            label="Configure AI Model",
-            command=self.configure_ai_model
-        )
-        self.ai_menu.add_command(
-            label="Run AI Prompt",
-            command=self.ask_ai_prompt
-        )
-        self.ai_menu.add_command(
             label="Check AI Status",
             command=self.check_ai_status
         )
@@ -541,15 +596,10 @@ class LithiumIDE:
         )
         self.ai_menu.add_separator()
         self.ai_menu.add_command(
-            label="AI Skills Info",
-            command=self.show_ai_skills_info
-        )
-        self.ai_menu.add_separator()
-        self.ai_menu.add_command(
-            label="About AI",
+            label="About Lithium",
             command=lambda: messagebox.showinfo(
-                "AI",
-                "This menu lets you configure and run a local AI model with file and code manipulation capabilities."
+                "Lithium IDE",
+                "Developed by Vodkrox | 2026"
             )
         )
 
@@ -563,12 +613,11 @@ class LithiumIDE:
 
         tk.Label(
             config_win,
-            text="AI assistant: a single built-in model is available. Click 'Download' to install it locally.",
+            text="A built-in model is required. Click 'Download' to install it locally.",
             wraplength=480,
             justify=tk.LEFT
         ).pack(fill=tk.X, padx=12, pady=(12, 8), anchor="w")
 
-        # Load the single available candidate (ai_engine enforces a single candidate)
         candidates = ai_runner.list_model_candidates()
         if not candidates:
             tk.Label(config_win, text="No downloadable model available.").pack(fill=tk.X, padx=12, pady=12)
@@ -591,6 +640,7 @@ class LithiumIDE:
                 messagebox.showwarning("AI", "The model is downloading. Please wait until it finishes.")
                 return
             config_win.destroy()
+            self.root.destroy()
 
         def _update_progress(downloaded, total):
             if total and total > 0:
@@ -640,9 +690,13 @@ class LithiumIDE:
                 try:
                     local_path = ai_runner.download_model_url(url, progress_callback=update_progress)
                     self.ai_model_link = local_path
-                    self.root.after(0, lambda: self.status_label.config(text=f"AI: configured model {self.ai_model_link}"))
-                    self.root.after(0, lambda: self.status_label.config(text=f"AI: downloaded model to {local_path}"))
-                    self.root.after(0, lambda: progress_label.config(text="Download complete"))
+                    self.settings_manager.set("ai_model_path", local_path)
+                    def on_download_complete():
+                        progress_label.config(text="Download complete")
+                        messagebox.showinfo("AI", "Download Finished! Lithium will close.")
+                        config_win.destroy()
+                        self.root.destroy()
+                    self.root.after(0, on_download_complete)
                 except Exception as exc:
                     exc_text = str(exc)
                     def show_error():
@@ -657,12 +711,17 @@ class LithiumIDE:
         download_button = tk.Button(config_win, text="Download", command=start_download)
         download_button.pack(pady=(4, 8))
 
-        tk.Label(config_win, text="The system prompt is managed in src/ai_powered/parameters.ltai and is not editable here.").pack(fill=tk.X, padx=12, pady=(6, 6))
+        tk.Label(config_win, text="Wait until download finishes").pack(fill=tk.X, padx=12, pady=(6, 6))
         close_button = tk.Button(config_win, text="Close", command=on_close)
         close_button.pack(pady=6)
         config_win.protocol("WM_DELETE_WINDOW", on_close)
 
     def ask_ai_prompt(self):
+        has_file_opened = self.controller.file_path is not None
+        if not has_file_opened:
+            messagebox.showwarning("AI", "You must open a file from the explorer before using AI features.")
+            return
+
         if not self.ai_model_link:
             messagebox.showwarning("AI", "No AI model is configured. Please configure the model first.")
             return
@@ -691,7 +750,13 @@ class LithiumIDE:
     def run_ai_prompt(self, prompt):
         self.root.after(0, lambda: self.status_label.config(text="AI: running local model..."))
         try:
-            result = ai_runner.generate_text_from_model(self.ai_model_link, self.ai_system_prompt, prompt)
+            editor_prompt = self._build_ai_editor_prompt(prompt)
+            result = ai_runner.generate_text_from_model(
+                self.ai_model_link,
+                self.ai_system_prompt,
+                editor_prompt
+            )
+            result = self._retry_if_broken_ai_edit_response(prompt, editor_prompt, result)
 
             def finish():
                 self.console.config(state=tk.NORMAL)
@@ -768,61 +833,213 @@ Example prompts:
 
     def change_theme(self, theme_name):
         theme.set_theme(theme_name)
+        self.settings_manager.set("theme", theme_name)
         theme.apply_theme(
-            self.root, 
-            self.editor, 
-            self.console, 
-            self.paned_window, 
-            self.editor_label, 
+            self.root,
+            self.editor,
+            self.console,
+            self.paned_window,
+            self.editor_label,
             self.console_label,
             self.line_numbers,
             self.status_bar,
             self.toolbar,
             self.toolbar_divider
         )
-        # Update sidebar styling for the new theme
-        self.main_paned.config(bg=theme.COLORS["bg_dark"])
-        self.chat_frame.config(bg=theme.COLORS["bg_dark"])
-        self.chat_header.config(bg=theme.COLORS["bg_header"])
-        self.chat_header_label.config(fg=theme.COLORS["fg_dim"], bg=theme.COLORS["bg_header"])
-        self.chat_close_btn.config(fg=theme.COLORS["fg_dim"], bg=theme.COLORS["bg_header"], activebackground=theme.COLORS["sash_color"])
-        self.chat_history.config(bg=theme.COLORS["bg_editor"], fg=theme.COLORS["fg_light"])
-        self.chat_input_container.config(bg=theme.COLORS["bg_dark"])
-        self.chat_input.config(bg=theme.COLORS["bg_editor"], fg=theme.COLORS["fg_light"], insertbackground=theme.COLORS["accent"], highlightbackground=theme.COLORS["sash_color"], highlightcolor=theme.COLORS["accent"])
-        self.chat_button_frame.config(bg=theme.COLORS["bg_dark"])
-        theme.style_toolbar_button(self.chat_send_btn)
-        theme.style_toolbar_button(self.chat_clear_btn)
+        self._apply_window_theme()
 
-        theme.style_toolbar_button(self.btn_file)
-        theme.style_toolbar_button(self.btn_lang)
-        theme.style_toolbar_button(self.btn_ai)
-        theme.style_toolbar_button(self.btn_theme)
-        theme.style_toolbar_button(self.btn_run)
+    def _apply_window_theme(self):
+        """Re-apply the active theme to every persistent UI region."""
+        for paned in (self.main_paned, self.center_right_paned):
+            paned.config(
+                bg=theme.COLORS["bg_dark"],
+                bd=0,
+                sashwidth=4,
+                sashpad=1,
+                sashrelief=tk.FLAT
+            )
 
-        theme.style_menu(self.file_menu)
-        theme.style_menu(self.lang_menu)
-        theme.style_menu(self.ai_menu)
-        theme.style_menu(self.theme_menu)
+        for frame_attr in ("editor_frame", "console_frame", "explorer_frame"):
+            if hasattr(self, frame_attr):
+                getattr(self, frame_attr).config(bg=theme.COLORS["bg_dark"])
+
+        self._apply_status_bar_theme()
+        self._apply_chat_theme()
+
+        if hasattr(self, "file_explorer") and self.file_explorer:
+            self.file_explorer.apply_theme()
+
+        for button in (
+            self.btn_file,
+            self.btn_lang,
+            self.btn_ai,
+            self.btn_theme,
+            self.btn_run,
+            self.chat_send_btn,
+            self.chat_clear_btn,
+        ):
+            theme.style_toolbar_button(button)
+
+        self.conv_dropdown_btn.config(
+            bg=theme.COLORS["bg_header"],
+            fg=theme.COLORS["fg_light"],
+            activebackground=theme.COLORS["sash_color"],
+            activeforeground=theme.COLORS["fg_light"]
+        )
+
+        for menu in (self.file_menu, self.lang_menu, self.ai_menu, self.theme_menu):
+            theme.style_menu(menu)
 
         self.build_languages_menu()
         self.build_theme_menu()
+
+    def _apply_status_bar_theme(self):
+        self.status_bar.config(bg=theme.COLORS["bg_header"])
+        self.status_label.config(
+            bg=theme.COLORS["bg_header"],
+            fg=theme.COLORS["fg_dim"]
+        )
+
+    def _apply_chat_theme(self):
+        self.chat_frame.config(bg=theme.COLORS["bg_dark"])
+        self.chat_panel.config(bg=theme.COLORS["bg_dark"])
+        self.chat_header.config(bg=theme.COLORS["bg_header"])
+        self.chat_header_label.config(fg=theme.COLORS["fg_dim"], bg=theme.COLORS["bg_header"])
+        self.chat_close_btn.config(
+            fg=theme.COLORS["fg_dim"],
+            bg=theme.COLORS["bg_header"],
+            activebackground=theme.COLORS["sash_color"],
+            activeforeground=theme.COLORS["accent"]
+        )
+        self.chat_history.config(
+            bg=theme.COLORS["bg_editor"],
+            fg=theme.COLORS["fg_light"],
+            insertbackground=theme.COLORS["accent"],
+            selectbackground=theme.COLORS["selection_bg"],
+            selectforeground=theme.COLORS["fg_light"]
+        )
+        self.chat_input_container.config(bg=theme.COLORS["bg_dark"])
+        self.chat_input.config(
+            bg=theme.COLORS["bg_editor"],
+            fg=theme.COLORS["fg_light"],
+            insertbackground=theme.COLORS["accent"],
+            selectbackground=theme.COLORS["selection_bg"],
+            selectforeground=theme.COLORS["fg_light"],
+            highlightbackground=theme.COLORS["sash_color"],
+            highlightcolor=theme.COLORS["accent"]
+        )
+        self.chat_button_frame.config(bg=theme.COLORS["bg_dark"])
+        self._restyle_chat_tags()
+        self._restyle_embedded_chat_widgets()
+
+    def _restyle_chat_tags(self):
+        self.chat_history.tag_config(
+            "approval_msg",
+            foreground=theme.COLORS["accent"],
+            font=("Segoe UI", 10)
+        )
+        self.chat_history.tag_config(
+            "code_block_tag",
+            background=theme.COLORS["bg_dark"],
+            foreground=theme.COLORS["fg_light"],
+            font=theme.FONTS.get("editor", ("Consolas", 11))
+        )
+        for tag_name in self.chat_history.tag_names():
+            if not tag_name.startswith("sender_tag_"):
+                continue
+            sender = tag_name.removeprefix("sender_tag_")
+            if sender == "AI":
+                color = theme.COLORS["accent"]
+            elif sender == "Error":
+                color = theme.COLORS["console_err"]
+            else:
+                color = theme.COLORS["fg_dim"]
+            self.chat_history.tag_config(tag_name, foreground=color, font=("Segoe UI", 10, "bold"))
+
+    def _restyle_embedded_chat_widgets(self):
+        for widget in self.chat_history.winfo_children():
+            self._restyle_embedded_widget(widget)
+
+    def _restyle_embedded_widget(self, widget):
+        try:
+            if isinstance(widget, tk.Frame):
+                widget.config(bg=theme.COLORS["bg_dark"])
+            elif isinstance(widget, tk.Label):
+                widget.config(bg=theme.COLORS["bg_dark"])
+                if widget.cget("fg") not in (theme.COLORS["success"], theme.COLORS["error"]):
+                    widget.config(fg=theme.COLORS["fg_dim"])
+            elif isinstance(widget, tk.Button):
+                text = widget.cget("text")
+                if "Approve" in text or "Apply" in text or "Aprobar" in text:
+                    widget.config(bg=theme.COLORS["accent"], fg=theme.COLORS["bg_dark"])
+                else:
+                    widget.config(bg=theme.COLORS["sash_color"], fg=theme.COLORS["fg_light"])
+        except Exception:
+            pass
+
+        for child in widget.winfo_children():
+            self._restyle_embedded_widget(child)
 
 
     def open_folder(self):
         """Open a folder in the file explorer."""
         folder = filedialog.askdirectory(title="Open Folder")
         if folder:
+            self.show_explorer()
             self.file_explorer.load_folder(folder)
+            self.file_or_folder_opened = True
+            self.update_editor_ai_state()
+
+    def hide_explorer(self):
+        """Hide the file explorer sidebar."""
+        try:
+            self.main_paned.forget(self.explorer_frame)
+        except Exception:
+            pass
+
+    def show_explorer(self):
+        """Show the file explorer sidebar."""
+        try:
+            panes = self.main_paned.panes()
+            if str(self.explorer_frame) not in panes:
+                self.main_paned.add(self.explorer_frame, before=self.center_right_paned, minsize=150, width=320)
+        except Exception:
+            pass
 
     def run_code(self, event=None):
+        if runner.is_running():
+            self._stop_script()
+            return
+
         if not self.controller.file_path:
             self.controller.save_as_file()
             if not self.controller.file_path:
                 return
         else:
             self.controller.save_file()
-        
-        runner.run_code(self.controller.file_path, self.console)
+
+        self._script_started()
+        runner.run_code(self.controller.file_path, self.console, on_complete=self._script_complete)
+
+    def _stop_script(self):
+        stopped = runner.stop_code()
+        if stopped:
+            self.status_label.config(text="Script stopped")
+            self.console.config(state=tk.NORMAL)
+            self.console.insert(tk.END, "\n[Script stopped by user]\n")
+            self.console.config(state=tk.DISABLED)
+        else:
+            self.status_label.config(text="Stop request failed")
+
+    def _script_started(self):
+        self.script_running = True
+        self.btn_run.config(text=" Stop Script", image=self.icons.get("stop", ""))
+        self.status_label.config(text="Running script...")
+
+    def _script_complete(self):
+        self.script_running = False
+        self.btn_run.config(text=" Run Script", image=self.icons.get("run", ""))
+        self.status_label.config(text="Ready")
 
     def show_search_dialog(self):
         search_win = tk.Toplevel(self.root)
@@ -877,33 +1094,59 @@ Example prompts:
 
         def focus_listbox(event):
             listbox.focus_set()
-            if listbox.size() > 0:
-                listbox.selection_clear(0, tk.END)
-                listbox.selection_set(0)
-                listbox.activate(0)
 
-        search_entry.bind("<Down>", focus_listbox)
+    def _resolve_ai_model_link(self):
+        saved_model = self.settings_manager.get("ai_model_path")
+        if saved_model and (os.path.isfile(saved_model) or os.path.isdir(saved_model)):
+            return saved_model
 
-    def check_and_setup_dependencies(self):
+        local_model = ai_runner.find_local_model()
+        if local_model:
+            return local_model
+
+        return ai_runner.MODEL_CANDIDATES[0][1] if ai_runner.MODEL_CANDIDATES else ""
+
+    def _get_missing_dependencies(self):
         missing = []
-        try:
-            from huggingface_hub import HfApi, get_token
-        except Exception:
+        if not can_import_module("huggingface_hub"):
             missing.append("huggingface_hub")
-
         if ai_runner.get_runtime_status() is None:
             missing.append("llama-cpp-python")
+        return missing
 
-        if not missing:
+    def _is_ai_model_ready(self):
+        if self.ai_model_link and os.path.isfile(self.ai_model_link):
+            return True
+        if self.ai_model_link and os.path.isdir(self.ai_model_link):
             return True
 
-        # Create Setup Assistant Window
+        local_model = ai_runner.find_local_model()
+        if local_model:
+            self.ai_model_link = local_model
+            self.settings_manager.set("ai_model_path", local_model)
+            return True
+
+        return False
+
+    def _finish_dependency_setup(self):
+        if self._is_ai_model_ready():
+            self.root.attributes("-disabled", False)
+            return True
+        self.configure_ai_model()
+        return False
+
+    def check_and_setup_dependencies(self):
+        self.root.attributes("-disabled", True)
+        missing = self._get_missing_dependencies()
+        if not missing:
+            return self._finish_dependency_setup()
+
+        self.root.attributes("-disabled", True)
         setup_win = tk.Toplevel(self.root)
-        setup_win.title("Lithium IDE - Asistente de Configuración de IA")
+        setup_win.title("Lithium IDE - AI Setup Assistant")
         setup_win.geometry("500x320")
         setup_win.resizable(False, False)
 
-        # Center the window
         setup_win.update_idletasks()
         width = setup_win.winfo_width()
         height = setup_win.winfo_height()
@@ -911,7 +1154,6 @@ Example prompts:
         y = (setup_win.winfo_screenheight() // 2) - (height // 2)
         setup_win.geometry(f"+{x}+{y}")
 
-        # Apply theme colors
         bg_color = theme.COLORS.get("bg_dark", "#1e1e1e")
         fg_color = theme.COLORS.get("fg_light", "#ffffff")
         fg_dim = theme.COLORS.get("fg_dim", "#888888")
@@ -922,17 +1164,17 @@ Example prompts:
 
         title_label = tk.Label(
             setup_win,
-            text="Configuración Inicial de Inteligencia Artificial",
+            text="Initial AI Configuration",
             font=("Segoe UI", 13, "bold"),
             fg=accent_color,
             bg=bg_color
         )
         title_label.pack(pady=(20, 10))
 
-        desc_text = "Para poder utilizar las herramientas de IA local, el sistema necesita instalar las siguientes dependencias:\n\n"
+        desc_text = "To use the local AI tools, the following dependencies need to be installed:\n\n"
         for dep in missing:
             desc_text += f" • {dep}\n"
-        desc_text += "\n¿Deseas instalarlas automáticamente ahora?"
+        desc_text += "\nWould you like to install them automatically now?"
 
         desc_label = tk.Label(
             setup_win,
@@ -962,7 +1204,7 @@ Example prompts:
 
         install_btn = tk.Button(
             button_frame,
-            text="Instalar dependencias",
+            text="Install Dependencies",
             font=("Segoe UI", 10, "bold"),
             bg=accent_color,
             fg=bg_color,
@@ -979,9 +1221,9 @@ Example prompts:
 
         def on_close():
             if installation_in_progress["active"]:
-                messagebox.showwarning("Instalación en curso", "Las dependencias se están instalando. Por favor, espera a que termine.")
+                messagebox.showwarning("Installation in Progress", "Dependencies are being installed. Please wait until the process finishes.")
                 return
-            if messagebox.askyesno("Salir", "¿Seguro que quieres salir? El editor requiere estas dependencias para continuar."):
+            if messagebox.askyesno("Exit", "Are you sure you want to exit? The editor requires these dependencies to continue."):
                 setup_win.destroy()
                 self.root.destroy()
                 sys.exit(0)
@@ -989,61 +1231,51 @@ Example prompts:
         setup_win.protocol("WM_DELETE_WINDOW", on_close)
 
         def start_installation():
+            import threading
+            import tempfile
             installation_in_progress["active"] = True
             install_btn.config(state="disabled")
             progress_bar.config(mode="indeterminate")
             progress_bar.start(10)
-            progress_label.config(text="Instalando dependencias... Esto puede tardar un momento.")
+            progress_label.config(text="Installing dependencies... This may take a moment.")
 
             def install_thread():
                 import subprocess
                 import sys
                 import importlib
+                import os
+                from src.utils import get_python_executable
+                python_exe = get_python_executable()
                 try:
-                    import os
                     custom_env = os.environ.copy()
-                    temp_dir = os.path.abspath(os.path.join(".cache", "t"))
-                    os.makedirs(temp_dir, exist_ok=True)
+                    temp_dir = tempfile.mkdtemp(prefix="lithium_pip_")
                     custom_env["TEMP"] = temp_dir
                     custom_env["TMP"] = temp_dir
 
                     for dep in missing:
-                        self.root.after(0, lambda d=dep: progress_label.config(text=f"Instalando {d}..."))
-                        
+                        self.root.after(0, lambda d=dep: progress_label.config(text=f"Installing {d}..."))
+
                         process = subprocess.Popen(
-                            [sys.executable, "-m", "pip", "install", dep],
+                            [python_exe, "-m", "pip", "install", dep],
                             stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT,
                             text=True,
                             env=custom_env,
                             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
                         )
-                        
+
                         while True:
                             line = process.stdout.readline()
                             if not line:
                                 break
                             if "Building wheel" in line or "pyproject.toml" in line or "Building wheels" in line:
                                 self.root.after(0, lambda: progress_label.config(text="Building llama-cpp-python. Please wait..."))
-                        
+
                         process.wait()
                         if process.returncode != 0:
                             raise subprocess.CalledProcessError(process.returncode, process.args)
-                    
+
                     importlib.invalidate_caches()
-
-                    # Verify
-                    still_missing = []
-                    try:
-                        from huggingface_hub import HfApi, get_token
-                    except Exception:
-                        still_missing.append("huggingface_hub")
-                    if ai_runner.get_runtime_status() is None:
-                        still_missing.append("llama-cpp-python")
-
-                    if still_missing:
-                        raise RuntimeError(f"Las siguientes dependencias no pudieron cargarse: {', '.join(still_missing)}")
-
                     self.root.after(0, finish_success)
                 except Exception as e:
                     err_msg = str(e)
@@ -1055,8 +1287,8 @@ Example prompts:
             installation_in_progress["active"] = False
             progress_bar.stop()
             progress_bar.config(mode="determinate", value=100)
-            progress_label.config(text="¡Instalación completada con éxito!")
-            messagebox.showinfo("Configuración completada", "Todas las dependencias han sido instaladas con éxito. Iniciando Lithium IDE.")
+            progress_label.config(text="Installation completed successfully!")
+            messagebox.showinfo("Setup Complete", "All dependencies have been installed successfully. Starting Lithium IDE.")
             setup_win.destroy()
 
         def is_long_paths_enabled():
@@ -1087,57 +1319,58 @@ Example prompts:
             installation_in_progress["active"] = False
             progress_bar.stop()
             progress_bar.config(mode="determinate", value=0)
-            progress_label.config(text="Error durante la instalación.")
-            
+            progress_label.config(text="Error during installation.")
+
             import sys
             if sys.platform == "win32" and not is_long_paths_enabled():
                 if messagebox.askyesno(
-                    "Rutas Largas Requeridas",
-                    "La instalación de llama-cpp-python falló debido al límite de caracteres de Windows (MAX_PATH).\n\n"
-                    "¿Deseas que Lithium intente activar las rutas largas automáticamente? (Requiere permisos de administrador y se abrirá una ventana de confirmación)."
+                    "Long Paths Required",
+                    "The installation of llama-cpp-python failed due to the Windows character limit (MAX_PATH).\n\n"
+                    "Would you like Lithium to try enabling long paths automatically? (Requires administrator permissions and a confirmation prompt will appear)."
                 ):
                     if enable_windows_long_paths():
                         messagebox.showinfo(
-                            "Solicitud enviada",
-                            "Se ha solicitado la activación. Una vez aceptado el permiso de Windows (UAC), reinicia el IDE y vuelve a intentar la instalación."
+                            "Request Sent",
+                            "The activation has been requested. Once the Windows permission (UAC) is accepted, restart the IDE and try the installation again."
                         )
                         setup_win.destroy()
                         self.root.destroy()
                         sys.exit(0)
                     else:
-                        messagebox.showerror("Error", "No se pudo solicitar la activación automática.")
-            
-            messagebox.showerror("Error de instalación", f"Ocurrió un error al instalar las dependencias:\n\n{err_msg}\n\nPor favor, inténtalo manualmente con: pip install {' '.join(missing)}")
+                        messagebox.showerror("Error", "Could not request automatic activation.")
+
+            messagebox.showerror("Installation Error", f"An error occurred while installing dependencies:\n\n{err_msg}\n\nPlease try manually with: pip install {' '.join(missing)}")
             install_btn.config(state="normal")
 
-        # Block interaction with other windows
         setup_win.transient(self.root)
         setup_win.grab_set()
         self.root.wait_window(setup_win)
+        self.root.attributes("-disabled", False)
+        if not self._get_missing_dependencies():
+            self._finish_dependency_setup()
 
     def _init_ai_skills(self):
         """Initialize the AI Skills Executor with editor callbacks."""
         def get_editor_content():
             return self.editor.get("1.0", tk.END)
-        
+
         def set_editor_content(content):
             self.editor.delete("1.0", tk.END)
             self.editor.insert("1.0", content)
             self.controller.update_line_numbers()
             self.controller.update_status()
-        
+
         def get_file_path():
             return self.controller.file_path
-        
+
         def get_project_folder():
-            # Get the project folder from the file explorer
             if hasattr(self, 'file_explorer') and self.file_explorer:
                 return self.file_explorer.current_folder
             return None
-        
+
         def status_update(message):
             self.root.after(0, lambda: self.status_label.config(text=f"AI Skills: {message}"))
-        
+
         try:
             self.ai_skills_executor = get_ai_skills_executor(
                 editor_getter=get_editor_content,
@@ -1146,7 +1379,6 @@ Example prompts:
                 project_folder_getter=get_project_folder,
                 status_callback=status_update
             )
-            # Append skills prompt to system prompt
             self.ai_system_prompt = self.ai_system_prompt + "\n" + self.ai_skills_executor.generate_skill_prompt()
         except Exception as e:
             print(f"Warning: Could not initialize AI Skills: {e}")
@@ -1166,81 +1398,172 @@ Example prompts:
         self.chat_history.config(state=tk.DISABLED)
 
     def send_chat_message(self):
+        has_file_opened = self.controller.file_path is not None
+        if not has_file_opened:
+            messagebox.showwarning("AI", "You must open a file from the explorer before using AI features.")
+            return
+
         message = self.chat_input.get("1.0", tk.END).strip()
         if not message:
             return
-        
+
         self.chat_input.delete("1.0", tk.END)
         self.append_to_chat_history("You", message)
-        
-        # Auto-create conversation if none exists
+
         if not self.conversation_manager.current_conversation:
             self.conversation_manager.create_conversation("New Conversation")
             self.refresh_conversations_list()
-        
-        # Save user message to current conversation
+
         if self.conversation_manager.current_conversation:
             self.conversation_manager.current_conversation.add_message("user", message)
             self.conversation_manager.save_conversation()
-        
+
         threading.Thread(target=self.run_chat_ai, args=(message,), daemon=True).start()
+
+    def _build_ai_editor_prompt(self, user_message):
+        """Build an AI prompt that includes the current file content with line numbers.
+
+        The AI needs this context so it can decide whether it must delete, replace,
+        or add lines before proposing changes. Without the numbered file snapshot,
+        the model tends to append code blindly instead of repairing invalid code.
+        """
+        file_path = self.controller.file_path or "Untitled"
+        language = self.selected_lang.get()
+        content = self.editor.get("1.0", "end-1c")
+        numbered_lines = content.splitlines()
+
+        if numbered_lines:
+            numbered_content = "\n".join(
+                f"{line_number}: {line}"
+                for line_number, line in enumerate(numbered_lines, start=1)
+            )
+        else:
+            numbered_content = "(empty file)"
+
+        return f"""TASK
+User request:
+{user_message}
+
+Current file path: {file_path}
+Current language: {language}
+
+Current open file content with line numbers:
+```text
+{numbered_content}
+```
+
+OUTPUT CONTRACT
+- If the user request requires editing the file, respond ONLY with one or more <skill ...> XML blocks.
+- Do NOT explain what XML tags are.
+- Do NOT say "propose the changes".
+- Do NOT describe the changes in prose instead of using skills.
+- If the current content would make the final file invalid, first emit delete_lines for the invalid/unrelated lines, then emit add_lines with the corrected code.
+- If the whole file is invalid or contains unrelated text, use replace_file to replace the entire file content.
+- Do not just append code if existing text/code would prevent compilation.
+- All modifications must target only the currently open file and must be expressed with skill XML tags so the user can approve them.
+
+For example, if line 1 is invalid plain text and the user asks for Python hello world, respond exactly like this:
+<skill name="delete_lines"><parameter name="line">1</parameter><parameter name="count">1</parameter></skill>
+<skill name="add_lines"><parameter name="line">1</parameter><parameter name="content">print("Hello, world!")</parameter></skill>
+"""
+
+    def _looks_like_broken_ai_edit_response(self, response):
+        """Detect meta/prompt-leak responses that cannot drive Lithium skills."""
+        if not response or "<skill" in response.lower():
+            return False
+        broken_markers = (
+            "xml tags must be well-formed",
+            "contain all necessary parameters",
+            "propose the changes",
+            "current file content is invalid",
+            "output contract",
+            "respond only with one or more",
+        )
+        lowered = response.lower()
+        return any(marker in lowered for marker in broken_markers)
+
+    def _retry_if_broken_ai_edit_response(self, original_user_message, editor_prompt, response):
+        """Retry once when the model echoes instructions instead of emitting skills."""
+        if not self._looks_like_broken_ai_edit_response(response):
+            return response
+
+        repair_prompt = f"""The previous answer was invalid because it was meta-instruction text, not executable Lithium skill XML.
+
+Previous invalid answer:
+```text
+{response}
+```
+
+Original user request:
+{original_user_message}
+
+Return ONLY the corrected <skill> blocks needed for the current open file. No prose, no explanation.
+
+{editor_prompt}
+"""
+        try:
+            repaired = ai_runner.generate_text_from_model(
+                self.ai_model_link,
+                self.ai_system_prompt + "\nYour next answer must be only valid <skill> XML blocks for Lithium.",
+                repair_prompt,
+                max_tokens=512
+            )
+            if repaired and not self._looks_like_broken_ai_edit_response(repaired):
+                return repaired
+        except Exception:
+            pass
+
+        return response
 
     def run_chat_ai(self, prompt):
         self.root.after(0, lambda: self.status_label.config(text="AI: Loading..."))
-        
-        # Show loading indicator with animated dots
+
         self._show_loading_indicator()
-        
+
         try:
+            editor_prompt = self._build_ai_editor_prompt(prompt)
             response = ai_runner.generate_text_from_model(
-                self.ai_model_link, 
-                self.ai_system_prompt, 
-                prompt
+                self.ai_model_link,
+                self.ai_system_prompt,
+                editor_prompt
             )
-            
-            # Remove loading indicator
+            response = self._retry_if_broken_ai_edit_response(prompt, editor_prompt, response)
+
             self._remove_loading_indicator()
-            
-            # Process AI skills if executor is available - use preview mode for approval
-            skill_results = []  # List of (skill_name, result) tuples
+
+            skill_results = []
             pending_approvals = []
             clean_response = response
             if self.ai_skills_executor:
                 try:
                     skill_results = self.ai_skills_executor.parse_for_preview(response)
                     clean_response = self.ai_skills_executor.get_clean_response(response)
-                    
-                    # Separate skills that need approval (skill_results is list of tuples: (skill_name, result))
+
                     for i, (skill_name, result) in enumerate(skill_results):
                         if result.requires_approval and result.success:
                             pending_approvals.append((i, skill_name, result))
                 except Exception as skill_err:
                     print(f"Warning: Error processing AI skills: {skill_err}")
-            
-            # Display the response and handle approvals
+
             def show_response():
-                # Save AI response to current conversation
                 if self.conversation_manager.current_conversation and clean_response.strip():
                     self.conversation_manager.current_conversation.add_message("assistant", clean_response)
                     self.conversation_manager.save_conversation()
-                
-                # Show skill previews that need approval
+
                 if pending_approvals:
                     self._show_approval_dialog(0, pending_approvals, skill_results, clean_response)
                 else:
-                    # No approvals needed, show results directly
                     for skill_name, result in skill_results:
                         status_icon = "✓" if result.success else "✗"
                         self.append_to_chat_history("Skill", f"{status_icon} {result.message}")
-                    
+
                     if clean_response.strip():
                         self.append_to_chat_history("AI", clean_response)
-                    
+
                     self.status_label.config(text="AI: Ready")
-                    
-                    # Refresh conversations list to update titles
+
                     self.refresh_conversations_list()
-            
+
             self.root.after(0, show_response)
         except Exception as exc:
             self._remove_loading_indicator()
@@ -1251,11 +1574,9 @@ Example prompts:
     def _show_loading_indicator(self):
         """Show simple loading indicator with fading dot in chat."""
         self.chat_history.config(state=tk.NORMAL)
-        
-        # Create a frame to hold the loader
+
         self._loading_frame = tk.Frame(self.chat_history, bg=theme.COLORS.get("bg_dark", "#181825"))
-        
-        # Add "AI is thinking" text
+
         tk.Label(
             self._loading_frame,
             text="AI is thinking",
@@ -1263,8 +1584,7 @@ Example prompts:
             fg=theme.COLORS.get("fg_dim", "#a6adc8"),
             bg=theme.COLORS.get("bg_dark", "#181825")
         ).pack(side=tk.LEFT)
-        
-        # Create canvas for animated dot
+
         self._loader_canvas = tk.Canvas(
             self._loading_frame,
             width=12,
@@ -1273,14 +1593,12 @@ Example prompts:
             highlightthickness=0
         )
         self._loader_canvas.pack(side=tk.LEFT, padx=(2, 5))
-        
-        # Insert the frame into chat history
+
         self.chat_history.window_create(tk.END, window=self._loading_frame)
         self.chat_history.insert(tk.END, "\n")
         self.chat_history.see(tk.END)
         self.chat_history.config(state=tk.DISABLED)
-        
-        # Start dot animation
+
         self._fade_alpha = 0
         self._fade_increasing = True
         self._animate_loader()
@@ -1289,29 +1607,25 @@ Example prompts:
         """Animate a single dot with fade in/out effect."""
         if not hasattr(self, '_loader_canvas'):
             return
-        
+
         canvas = self._loader_canvas
         canvas.delete("all")
-        
-        # Get colors
+
         accent_color = theme.COLORS.get("accent", "#cba6f7")
         r = int(accent_color[1:3], 16)
         g = int(accent_color[3:5], 16)
         b = int(accent_color[5:7], 16)
-        
-        # Calculate opacity for fade effect
+
         opacity = self._fade_alpha / 100.0
         color = f"#{int(r * opacity):02x}{int(g * opacity):02x}{int(b * opacity):02x}"
-        
-        # Draw single dot in center
+
         dot_size = 3
         canvas.create_oval(
             6 - dot_size, 6 - dot_size,
             6 + dot_size, 6 + dot_size,
             fill=color, outline=""
         )
-        
-        # Update fade animation
+
         if self._fade_increasing:
             self._fade_alpha += 5
             if self._fade_alpha >= 100:
@@ -1320,8 +1634,7 @@ Example prompts:
             self._fade_alpha -= 5
             if self._fade_alpha <= 0:
                 self._fade_increasing = True
-        
-        # Schedule next frame
+
         if hasattr(self, '_loader_canvas'):
             self.root.after(50, self._animate_loader)
 
@@ -1333,136 +1646,157 @@ Example prompts:
             except Exception:
                 pass
             del self._loading_frame
-        
+
         if hasattr(self, '_loader_canvas'):
             del self._loader_canvas
 
     def _show_approval_dialog(self, index, pending_approvals, all_results, clean_response):
         """Show approval dialog inline in the chat for pending skill changes."""
         if index >= len(pending_approvals):
-            # All approvals processed, show final results
+            self.chat_history.config(state=tk.NORMAL)
+            self.chat_history.insert(tk.END, "\n" + "="*50 + "\n")
             for skill_name, result in all_results:
                 status_icon = "✓" if result.success else "✗"
-                self.append_to_chat_history("Skill", f"{status_icon} {result.message}")
-            
+                color = theme.COLORS.get("success", "#4ade80") if result.success else theme.COLORS.get("error", "#f87171")
+                self.chat_history.insert(tk.END, f"Skill:  {status_icon} Changes applied\n", ("skill_result",))
+                self.chat_history.tag_config("skill_result", foreground=color, font=("Segoe UI", 9, "bold"))
+
             if clean_response.strip():
+                self.chat_history.insert(tk.END, "\n")
                 self.append_to_chat_history("AI", clean_response)
-            
+
+            self.chat_history.see(tk.END)
+            self.chat_history.config(state=tk.DISABLED)
             self.status_label.config(text="AI: Ready")
             return
-        
+
         result_idx, skill_name, result = pending_approvals[index]
         data = result.data or {}
-        
-        # Build the approval message to show in chat
-        approval_msg = f"⚡ **AI wants to: {result.message}**\n"
-        
+
+        self.chat_history.config(state=tk.NORMAL)
+        self.chat_history.insert(tk.END, "\n")
+
+        title = f"⚡ **AI wants to: {result.message}**"
         if len(pending_approvals) > 1:
-            approval_msg += f"_(Change {index + 1} of {len(pending_approvals)})_\n"
-        
-        # Add preview content based on skill type
+            title += f" _(Change {index + 1} of {len(pending_approvals)})_"
+
+        self.chat_history.insert(tk.END, title + "\n\n", ("approval_title",))
+        self.chat_history.tag_config("approval_title", foreground=theme.COLORS.get("accent", "#7C9EFF"),
+                                     font=("Segoe UI", 10, "bold"))
+
         if skill_name in ("delete_lines", "remove_lines"):
-            # For delete operations, show the original content that will be deleted
             if "original_content" in data and "new_content" in data:
                 original = data.get("original_content", "")
                 new = data.get("new_content", "")
                 original_lines = original.splitlines()
                 new_lines = new.splitlines()
-                approval_msg += f"\n📝 Lines will be removed from the editor.\n"
-                approval_msg += f"Current lines: {len(original_lines)} → After deletion: {len(new_lines)}\n"
-        elif "new_content" in data:
-            approval_msg += "\n```python\n" + data.get("new_content", "") + "\n```"
-        elif "path" in data:
-            approval_msg += f"\n📁 Path: {data.get('path', '')}\n"
+
+                self.chat_history.insert(tk.END, "📝 Lines will be removed from the editor.\n")
+                self.chat_history.insert(tk.END, f"Current lines: {len(original_lines)} → After deletion: {len(new_lines)}\n\n",
+                                        ("preview_info",))
+                self.chat_history.tag_config("preview_info", foreground=theme.COLORS.get("fg_dim", "#8F99A6"),
+                                           font=("Segoe UI", 9))
+        elif skill_name in ("add_lines", "insert_lines"):
+            if "new_content" in data:
+                content = data.get("new_content", "").strip()
+                if content:
+                    lines = content.splitlines()
+                    line_count = len(lines)
+                    self.chat_history.insert(tk.END, f"➕ Will add {line_count} line(s).\n\n", ("preview_info",))
+                    self.chat_history.tag_config("preview_info", foreground=theme.COLORS.get("fg_dim", "#8F99A6"),
+                                               font=("Segoe UI", 9))
+
+                    self.chat_history.insert(tk.END, "```python\n", ("code_header",))
+                    self.chat_history.insert(tk.END, content + "\n", ("code_block_tag",))
+                    self.chat_history.insert(tk.END, "```\n\n", ("code_header",))
+                    self.chat_history.tag_config("code_header", foreground=theme.COLORS.get("fg_dim", "#8F99A6"))
+                    self.chat_history.tag_config("code_block_tag",
+                                               background=theme.COLORS.get("bg_header", "#111519"),
+                                               foreground=theme.COLORS.get("console_fg", "#D8DEE9"),
+                                               font=("Consolas", 10))
+        elif skill_name == "replace_file":
             if "content" in data:
-                approval_msg += "\n```python\n" + data.get("content", "") + "\n```"
-        
-        # Show the approval request in chat
-        self._show_inline_approval(approval_msg, result, skill_name, result_idx, 
+                self.chat_history.insert(tk.END, "🔄 Will replace entire file content.\n\n", ("preview_info",))
+                self.chat_history.tag_config("preview_info", foreground=theme.COLORS.get("fg_dim", "#8F99A6"),
+                                           font=("Segoe UI", 9))
+
+        self._show_inline_approval(result, skill_name, result_idx,
                                    all_results, pending_approvals, index, clean_response)
-    
-    def _show_inline_approval(self, message, result, skill_name, result_idx,
+
+    def _show_inline_approval(self, result, skill_name, result_idx,
                               all_results, pending_approvals, index, clean_response):
         """Show an inline approval request in the chat with approve/reject buttons."""
-        self.chat_history.config(state=tk.NORMAL)
-        
-        # Insert the message
-        self.chat_history.insert(tk.END, "\n")
-        self.chat_history.insert(tk.END, message + "\n", ("approval_msg",))
-        self.chat_history.tag_config("approval_msg", foreground=theme.COLORS.get("accent", "#cba6f7"), 
-                                     font=("Segoe UI", 10))
-        
-        # Create button frame
-        btn_frame = tk.Frame(self.chat_history, bg=theme.COLORS.get("bg_dark", "#181825"))
-        
+
+        btn_frame = tk.Frame(self.chat_history, bg=theme.COLORS.get("bg_dark", "#0B0D10"))
+
         def approve():
-            # Apply the skill
             apply_result = self.ai_skills_executor.apply_skill(skill_name, result)
-            all_results[result_idx] = apply_result
-            
-            # Update the button frame to show result
+            all_results[result_idx] = (skill_name, apply_result)
+
             for widget in btn_frame.winfo_children():
                 widget.destroy()
-            
-            status_icon = "✓" if apply_result.success else "✗"
-            status_color = "#4ade80" if apply_result.success else "#f87171"
-            
+
+            status_color = theme.COLORS.get("success", "#A3BE8C")
             tk.Label(
                 btn_frame,
-                text=f"{status_icon} {apply_result.message}",
+                text="✓ Changes applied",
                 font=("Segoe UI", 9, "bold"),
                 fg=status_color,
-                bg=theme.COLORS.get("bg_dark", "#181825")
+                bg=theme.COLORS.get("bg_dark", "#0B0D10")
             ).pack(side=tk.LEFT, padx=5)
-            
-            # Process next approval
+
             self.root.after(500, lambda: self._show_approval_dialog(index + 1, pending_approvals, all_results, clean_response))
-        
+
         def reject():
-            # Mark as rejected
-            all_results[result_idx] = AISkillResult(False, f"Rejected: {result.message}")
-            
-            # Update the button frame to show result
+            all_results[result_idx] = (skill_name, AISkillResult(False, f"Rejected: {result.message}"))
+
             for widget in btn_frame.winfo_children():
                 widget.destroy()
-            
+
             tk.Label(
                 btn_frame,
-                text=f"✗ Rejected: {result.message}",
+                text="✗ Rejected",
                 font=("Segoe UI", 9, "bold"),
-                fg="#f87171",
-                bg=theme.COLORS.get("bg_dark", "#181825")
+                fg=theme.COLORS.get("error", "#F07178"),
+                bg=theme.COLORS.get("bg_dark", "#0B0D10")
             ).pack(side=tk.LEFT, padx=5)
-            
-            # Process next approval
+
             self.root.after(500, lambda: self._show_approval_dialog(index + 1, pending_approvals, all_results, clean_response))
-        
-        tk.Button(
+
+        approve_btn = tk.Button(
             btn_frame,
             text="✓ Approve",
             font=("Segoe UI", 9, "bold"),
-            bg=theme.COLORS.get("accent", "#cba6f7"),
-            fg=theme.COLORS.get("bg_dark", "#181825"),
+            bg=theme.COLORS.get("accent", "#7C9EFF"),
+            fg=theme.COLORS.get("bg_dark", "#0B0D10"),
             bd=0,
-            padx=12,
-            pady=4,
+            padx=14,
+            pady=5,
             cursor="hand2",
-            command=approve
-        ).pack(side=tk.LEFT, padx=5)
-        
-        tk.Button(
+            command=approve,
+            activebackground=theme.COLORS.get("accent_hover", "#5B82D1"),
+            activeforeground=theme.COLORS.get("bg_dark", "#0B0D10"),
+            relief=tk.FLAT
+        )
+        approve_btn.pack(side=tk.LEFT, padx=5, pady=(10, 0))
+
+        reject_btn = tk.Button(
             btn_frame,
             text="✗ Reject",
             font=("Segoe UI", 9),
-            bg=theme.COLORS.get("sash_color", "#313244"),
-            fg=theme.COLORS.get("fg_light", "#cdd6f4"),
+            bg=theme.COLORS.get("sash_color", "#1F2833"),
+            fg=theme.COLORS.get("fg_light", "#E5E9F0"),
             bd=0,
-            padx=12,
-            pady=4,
+            padx=14,
+            pady=5,
             cursor="hand2",
-            command=reject
-        ).pack(side=tk.LEFT, padx=5)
-        
+            command=reject,
+            activebackground=theme.COLORS.get("sash_color", "#1F2833"),
+            activeforeground=theme.COLORS.get("accent", "#7C9EFF"),
+            relief=tk.FLAT
+        )
+        reject_btn.pack(side=tk.LEFT, padx=5, pady=(10, 0))
+
         self.chat_history.window_create(tk.END, window=btn_frame)
         self.chat_history.insert(tk.END, "\n")
         self.chat_history.see(tk.END)
@@ -1470,51 +1804,47 @@ Example prompts:
 
     def _get_skill_name_from_result(self, result_idx, all_results):
         """Get skill name from result index (simplified - in real impl would track names)."""
-        # This is a simplified version - the actual implementation would track skill names
-        # For now, we'll need to modify parse_for_preview to return skill names too
         return "unknown"
 
     def append_to_chat_history(self, sender, text):
         self.chat_history.config(state=tk.NORMAL)
-        
+
         color = theme.COLORS.get("accent", "#cba6f7") if sender == "AI" else theme.COLORS.get("fg_dim", "#a6adc8")
         if sender == "Error":
             color = theme.COLORS.get("console_err", "#ff0000")
-            
+
         self.chat_history.insert(tk.END, f"\n{sender}:\n", ("sender_tag_" + sender,))
         self.chat_history.tag_config("sender_tag_" + sender, foreground=color, font=("Segoe UI", 10, "bold"))
-        
+
         parts = text.split("```")
         for i, part in enumerate(parts):
             if i % 2 == 1:
-                # Code block
                 lines = part.split("\n")
                 lang = ""
                 code_content = part
                 if lines and lines[0].strip() in ["python", "javascript", "html", "css", "c++", "java", "rust", "go", "json", "py", "js"]:
                     lang = lines[0].strip()
                     code_content = "\n".join(lines[1:])
-                
+
                 start_index = self.chat_history.index(tk.END)
                 self.chat_history.insert(tk.END, code_content, ("code_block_tag",))
                 self.chat_history.tag_config(
-                    "code_block_tag", 
-                    background=theme.COLORS.get("bg_dark", "#181825"), 
-                    foreground=theme.COLORS.get("fg_light", "#cdd6f4"), 
+                    "code_block_tag",
+                    background=theme.COLORS.get("bg_dark", "#181825"),
+                    foreground=theme.COLORS.get("fg_light", "#cdd6f4"),
                     font=theme.FONTS.get("editor", ("Consolas", 11))
                 )
                 self.chat_history.insert(tk.END, "\n")
-                # Store start index for later removal
                 self.code_indices[code_content] = start_index
-                
+
                 btn_frame = tk.Frame(self.chat_history, bg=theme.COLORS.get("bg_dark", "#181825"))
 
                 apply_btn = tk.Button(
-                    btn_frame, 
-                    text="✓ Apply", 
-                    font=("Segoe UI", 9, "bold"), 
-                    bg=theme.COLORS.get("accent", "#cba6f7"), 
-                    fg=theme.COLORS.get("bg_dark", "#181825"), 
+                    btn_frame,
+                    text="✓ Apply",
+                    font=("Segoe UI", 9, "bold"),
+                    bg=theme.COLORS.get("accent", "#cba6f7"),
+                    fg=theme.COLORS.get("bg_dark", "#181825"),
                     bd=0,
                     padx=8,
                     pady=2,
@@ -1523,11 +1853,11 @@ Example prompts:
                 apply_btn.pack(side=tk.LEFT, padx=(5, 5))
 
                 review_btn = tk.Button(
-                    btn_frame, 
-                    text="🔍 Review", 
-                    font=("Segoe UI", 9), 
-                    bg=theme.COLORS.get("sash_color", "#313244"), 
-                    fg=theme.COLORS.get("fg_light", "#cdd6f4"), 
+                    btn_frame,
+                    text="🔍 Review",
+                    font=("Segoe UI", 9),
+                    bg=theme.COLORS.get("sash_color", "#313244"),
+                    fg=theme.COLORS.get("fg_light", "#cdd6f4"),
                     bd=0,
                     padx=8,
                     pady=2,
@@ -1535,7 +1865,6 @@ Example prompts:
                 )
                 review_btn.pack(side=tk.LEFT)
 
-                # Store the button frame for later removal on approval
                 if not hasattr(self, 'button_frames'): self.button_frames = {}
                 self.button_frames[code_content] = btn_frame
 
@@ -1543,7 +1872,7 @@ Example prompts:
                 self.chat_history.insert(tk.END, "\n")
             else:
                 self.chat_history.insert(tk.END, part)
-                
+
         self.chat_history.see(tk.END)
         self.chat_history.config(state=tk.DISABLED)
 
@@ -1555,11 +1884,9 @@ Example prompts:
             self.controller.update_line_numbers()
             self.controller.update_status()
             self.status_label.config(text="AI: Suggested code applied.")
-            # Remove the button frame associated with this code snippet, if exists
             if code in getattr(self, 'button_frames', {}):
                 btn_frame = self.button_frames.pop(code)
                 btn_frame.destroy()
-            # Remove the code snippet from chat history if present
             if code in getattr(self, 'code_indices', {}):
                 start = self.code_indices.pop(code)
                 end = f"{start} + {len(code)}c"
@@ -1575,18 +1902,18 @@ Example prompts:
         review_win.geometry("800x500")
         review_win.transient(self.root)
         review_win.grab_set()
-        
+
         review_win.update_idletasks()
         width = review_win.winfo_width()
         height = review_win.winfo_height()
         x = (review_win.winfo_screenwidth() // 2) - (width // 2)
         y = (review_win.winfo_screenheight() // 2) - (height // 2)
         review_win.geometry(f"+{x}+{y}")
-        
+
         bg_color = theme.COLORS.get("bg_dark", "#181825")
         fg_color = theme.COLORS.get("fg_light", "#cdd6f4")
         review_win.configure(bg=bg_color)
-        
+
         title_label = tk.Label(
             review_win,
             text="Revisión de Cambios de la IA",
@@ -1595,10 +1922,10 @@ Example prompts:
             bg=bg_color
         )
         title_label.pack(pady=(15, 10))
-        
+
         paned = tk.PanedWindow(review_win, orient=tk.HORIZONTAL, bg=bg_color, bd=0, sashwidth=4, sashpad=1, sashrelief=tk.FLAT)
         paned.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
-        
+
         original_code = ""
         has_selection = False
         try:
@@ -1609,45 +1936,45 @@ Example prompts:
                 original_code = self.editor.get("1.0", tk.END)
         except Exception:
             original_code = self.editor.get("1.0", tk.END)
-            
+
         orig_frame = tk.Frame(paned, bg=bg_color)
         orig_label = tk.Label(orig_frame, text="Código Actual" + (" (Selección)" if has_selection else " (Todo el archivo)"), fg=theme.COLORS.get("fg_dim", "#a6adc8"), bg=bg_color, font=("Segoe UI", 9, "bold"))
         orig_label.pack(fill=tk.X, anchor="w", pady=(0, 2))
-        
+
         orig_scroll = ttk.Scrollbar(orig_frame)
         orig_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         orig_text = tk.Text(orig_frame, wrap=tk.NONE, yscrollcommand=orig_scroll.set, font=theme.FONTS.get("editor", ("Consolas", 11)), bg=theme.COLORS.get("bg_editor", "#1e1e2e"), fg=theme.COLORS.get("fg_light", "#cdd6f4"), bd=0, highlightthickness=0)
         orig_text.pack(fill=tk.BOTH, expand=True)
         orig_scroll.config(command=orig_text.yview)
         orig_text.insert(tk.END, original_code)
         orig_text.config(state=tk.DISABLED)
         paned.add(orig_frame, minsize=200)
-        
+
         sug_frame = tk.Frame(paned, bg=bg_color)
         sug_label = tk.Label(sug_frame, text="Código Sugerido", fg=theme.COLORS.get("accent", "#cba6f7"), bg=bg_color, font=("Segoe UI", 9, "bold"))
         sug_label.pack(fill=tk.X, anchor="w", pady=(0, 2))
-        
+
         sug_scroll = ttk.Scrollbar(sug_frame)
         sug_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         sug_text = tk.Text(sug_frame, wrap=tk.NONE, yscrollcommand=sug_scroll.set, font=theme.FONTS.get("editor", ("Consolas", 11)), bg=theme.COLORS.get("bg_editor", "#1e1e2e"), fg=theme.COLORS.get("fg_light", "#cdd6f4"), bd=0, highlightthickness=0)
         sug_text.pack(fill=tk.BOTH, expand=True)
         sug_scroll.config(command=sug_text.yview)
         sug_text.insert(tk.END, suggested_code)
         sug_text.config(state=tk.DISABLED)
         paned.add(sug_frame, minsize=200)
-        
+
         def sync_yview(*args):
             orig_text.yview(*args)
             sug_text.yview(*args)
-            
+
         orig_scroll.config(command=sync_yview)
         sug_scroll.config(command=sync_yview)
-        
+
         btn_frame = tk.Frame(review_win, bg=bg_color)
         btn_frame.pack(fill=tk.X, padx=15, pady=15)
-        
+
         def approve_changes():
             try:
                 if has_selection:
@@ -1659,11 +1986,9 @@ Example prompts:
                 self.controller.update_line_numbers()
                 self.controller.update_status()
                 self.status_label.config(text="AI: Changes approved and applied.")
-                # Remove the button frame for this suggested code, if present
                 if suggested_code in getattr(self, 'button_frames', {}):
                     btn = self.button_frames.pop(suggested_code)
                     btn.destroy()
-                # Remove the code snippet from chat history if present
                 if suggested_code in getattr(self, 'code_indices', {}):
                     start = self.code_indices.pop(suggested_code)
                     end = f"{start} + {len(suggested_code)}c"
@@ -1673,7 +1998,7 @@ Example prompts:
                 review_win.destroy()
             except Exception as e:
                 messagebox.showerror("Error", f"Could not apply changes: {e}")
-                
+
         approve_btn = tk.Button(
             btn_frame,
             text="✓ Aprobar y Aplicar",
@@ -1686,7 +2011,7 @@ Example prompts:
             command=approve_changes
         )
         approve_btn.pack(side=tk.RIGHT, padx=5)
-        
+
         reject_btn = tk.Button(
             btn_frame,
             text="✗ Rechazar",
@@ -1699,22 +2024,20 @@ Example prompts:
             command=review_win.destroy
         )
         reject_btn.pack(side=tk.RIGHT, padx=5)
-        
+
         review_win.wait_window(review_win)
 
     def show_conversations_dropdown(self):
         """Show conversations dropdown menu from status bar."""
         conversations = self.conversation_manager.list_conversations()
         self._conversation_ids = [conv["id"] for conv in conversations]
-        
+
         menu = tk.Menu(self.root, tearoff=0, bg=theme.COLORS["bg_header"], fg=theme.COLORS["fg_light"])
-        
-        # New conversation option
+
         menu.add_command(label="＋ New Conversation", command=self.new_conversation)
         menu.add_separator()
-        
+
         if conversations:
-            # List existing conversations
             for i, conv in enumerate(conversations):
                 display_text = conv["title"][:30] + ("..." if len(conv["title"]) > 30 else "")
                 is_current = self.conversation_manager.current_conversation and \
@@ -1723,8 +2046,7 @@ Example prompts:
                     display_text = "✓ " + display_text
                 menu.add_command(label=display_text, command=lambda cid=conv["id"]: self.load_conversation(cid))
             menu.add_separator()
-            
-            # Context menu for current conversation
+
             if self.conversation_manager.current_conversation:
                 current_id = self.conversation_manager.current_conversation.id
                 menu.add_command(label="Rename Conversation", command=lambda: self.rename_conversation(current_id))
@@ -1733,12 +2055,11 @@ Example prompts:
                 menu.add_command(label="Delete Conversation", command=lambda: self.delete_conversation(current_id))
         else:
             menu.add_command(label="No saved conversations", state=tk.DISABLED)
-        
-        # Show menu above the button
+
         x = self.conv_dropdown_btn.winfo_rootx()
         y = self.conv_dropdown_btn.winfo_rooty() - 200
         menu.post(x, y)
-    
+
     def refresh_conversations_list(self):
         """Refresh the conversation dropdown button label."""
         if self.conversation_manager.current_conversation:
@@ -1746,43 +2067,34 @@ Example prompts:
             self.conv_dropdown_btn.config(text=f"💬 {title}")
         else:
             self.conv_dropdown_btn.config(text="💬 No conversation")
-    
+
     def new_conversation(self):
         """Create a new conversation."""
-        # Save current conversation if exists
         if self.conversation_manager.current_conversation:
             self.save_current_conversation_to_history()
-        
-        # Create new conversation
+
         self.conversation_manager.create_conversation("New Conversation")
-        
-        # Clear chat display
+
         self.chat_history.config(state=tk.NORMAL)
         self.chat_history.delete("1.0", tk.END)
         self.chat_history.config(state=tk.DISABLED)
-        
-        # Update button label
+
         self.refresh_conversations_list()
-        
-        # Welcome message
+
         self.append_to_chat_history("AI", "Hello! How can I help you today?")
-    
+
     def load_conversation(self, conversation_id):
         """Load a conversation and display its messages."""
-        # Save current conversation first
         if self.conversation_manager.current_conversation:
             self.save_current_conversation_to_history()
-        
-        # Load the selected conversation
+
         conversation = self.conversation_manager.load_conversation(conversation_id)
         if not conversation:
             return
-        
-        # Clear chat display
+
         self.chat_history.config(state=tk.NORMAL)
         self.chat_history.delete("1.0", tk.END)
-        
-        # Display all messages
+
         for msg in conversation.messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
@@ -1792,20 +2104,18 @@ Example prompts:
             elif role == "assistant":
                 sender = "AI"
             self.append_to_chat_history(sender, content)
-        
+
         self.chat_history.config(state=tk.DISABLED)
-        
-        # Update button label
+
         self.refresh_conversations_list()
-    
+
     def save_current_conversation_to_history(self):
         """Save the current chat history to the conversation."""
         if not self.conversation_manager.current_conversation:
             return
-        
-        # Save the conversation
+
         self.conversation_manager.save_conversation()
-    
+
     def rename_conversation(self, conversation_id):
         """Rename a conversation."""
         dialog = tk.Toplevel(self.root)
@@ -1814,7 +2124,7 @@ Example prompts:
         dialog.transient(self.root)
         dialog.grab_set()
         dialog.configure(bg=theme.COLORS["bg_dark"])
-        
+
         tk.Label(
             dialog,
             text="Enter new name:",
@@ -1822,7 +2132,7 @@ Example prompts:
             fg=theme.COLORS["fg_light"],
             bg=theme.COLORS["bg_dark"]
         ).pack(pady=(15, 5))
-        
+
         entry = tk.Entry(
             dialog,
             font=theme.FONTS["ui"],
@@ -1835,22 +2145,22 @@ Example prompts:
         )
         entry.pack(fill=tk.X, padx=20, pady=5)
         entry.focus_set()
-        
+
         def rename():
             new_name = entry.get().strip()
             if new_name:
                 self.conversation_manager.rename_conversation(conversation_id, new_name)
                 self.refresh_conversations_list()
                 dialog.destroy()
-        
+
         def on_enter(event):
             rename()
-        
+
         entry.bind("<Return>", on_enter)
-        
+
         btn_frame = tk.Frame(dialog, bg=theme.COLORS["bg_dark"])
         btn_frame.pack(pady=10)
-        
+
         tk.Button(
             btn_frame,
             text="Rename",
@@ -1863,7 +2173,7 @@ Example prompts:
             cursor="hand2",
             command=rename
         ).pack(side=tk.LEFT, padx=5)
-        
+
         tk.Button(
             btn_frame,
             text="Cancel",
@@ -1876,19 +2186,18 @@ Example prompts:
             cursor="hand2",
             command=dialog.destroy
         ).pack(side=tk.LEFT, padx=5)
-    
+
     def delete_conversation(self, conversation_id):
         """Delete a conversation after confirmation."""
         if messagebox.askyesno("Delete Conversation", "Are you sure you want to delete this conversation?"):
             self.conversation_manager.delete_conversation(conversation_id)
             self.refresh_conversations_list()
-            
-            # Clear chat if this was the current conversation
+
             if not self.conversation_manager.current_conversation:
                 self.chat_history.config(state=tk.NORMAL)
                 self.chat_history.delete("1.0", tk.END)
                 self.chat_history.config(state=tk.DISABLED)
-    
+
     def export_conversation(self, conversation_id):
         """Export a conversation to a file."""
         filetypes = [
@@ -1897,17 +2206,16 @@ Example prompts:
             ("Markdown files", "*.md"),
             ("All files", "*.*")
         ]
-        
+
         filename = filedialog.asksaveasfilename(
             defaultextension=".txt",
             filetypes=filetypes,
             title="Export Conversation"
         )
-        
+
         if not filename:
             return
-        
-        # Determine format from extension
+
         ext = os.path.splitext(filename)[1].lower()
         if ext == ".json":
             format_type = "json"
@@ -1915,7 +2223,7 @@ Example prompts:
             format_type = "md"
         else:
             format_type = "txt"
-        
+
         content = self.conversation_manager.export_conversation(conversation_id, format_type)
         if content:
             try:
@@ -1924,19 +2232,51 @@ Example prompts:
                 messagebox.showinfo("Export", "Conversation exported successfully!")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to export: {e}")
-    
+
+    def update_editor_ai_state(self):
+        """Update the enabled/disabled state of editor and AI features based on whether a file is opened."""
+        has_file_opened = self.controller.file_path is not None
+
+        if has_file_opened:
+            self.editor.config(state=tk.NORMAL)
+            self.line_numbers.config(state=tk.NORMAL)
+            self.btn_run.config(state=tk.NORMAL)
+
+            if hasattr(self, 'chat_input'):
+                self.chat_input.config(state=tk.NORMAL)
+            if hasattr(self, 'chat_send_btn'):
+                self.chat_send_btn.config(state=tk.NORMAL)
+            if hasattr(self, 'chat_clear_btn'):
+                self.chat_clear_btn.config(state=tk.NORMAL)
+
+            if not self.status_label.cget("text").startswith("AI:"):
+                self.status_label.config(text="Ready")
+        else:
+            self.editor.config(state=tk.DISABLED)
+            self.line_numbers.config(state=tk.DISABLED)
+            self.btn_run.config(state=tk.DISABLED)
+
+            if hasattr(self, 'chat_input'):
+                self.chat_input.config(state=tk.DISABLED)
+            if hasattr(self, 'chat_send_btn'):
+                self.chat_send_btn.config(state=tk.DISABLED)
+            if hasattr(self, 'chat_clear_btn'):
+                self.chat_clear_btn.config(state=tk.DISABLED)
+
+            self.status_label.config(text="Open a file from the explorer to start coding")
+
     def load_languages_async(self):
         try:
             url = "https://raw.githubusercontent.com/blakeembrey/language-map/master/languages.json"
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=5) as response:
                 data = json.loads(response.read().decode('utf-8'))
-                
+
                 fetched_langs = []
                 for name, info in data.items():
                     if info.get("type") == "programming":
                         fetched_langs.append(name)
-                
+
                 if fetched_langs:
                     self.languages = list(set(self.languages + fetched_langs))
                     self.root.after(0, self.build_languages_menu)
@@ -1945,5 +2285,15 @@ Example prompts:
 
 if __name__ == "__main__":
     root = tk.Tk()
+    root.withdraw()
+
+    splash = SplashScreen(root)
+
     app = LithiumIDE(root)
+
+    root.after(2000, lambda: (
+        splash.close(),
+        root.deiconify(),
+        root.state("zoomed")
+    ))
     root.mainloop()
