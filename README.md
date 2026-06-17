@@ -4,7 +4,6 @@ Open Source **AI IDE** that runs **fully locally**.
 ![banner](/src/assets/lithium_banner.png)
 ![Python](https://img.shields.io/badge/Python-3-blue?logo=python)
 ![Tkinter](https://img.shields.io/badge/Tkinter-GUI-blue)
-![Ollama](https://img.shields.io/badge/Ollama-Local_AI-black)
 ![Open Source](https://img.shields.io/badge/Open_Source-Yes-success)
 ![Local AI](https://img.shields.io/badge/AI-100%25_Local-purple)
 ![No Telemetry](https://img.shields.io/badge/Telemetry-None-success)
