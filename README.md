@@ -3,7 +3,6 @@ Open Source **AI IDE** that runs **fully locally**.
 
 ![banner](/src/assets/lithium_banner.png)
 ![Python](https://img.shields.io/badge/Python-3-blue?logo=python)
-![Windows](https://img.shields.io/badge/Windows-Supported-blue?logo=windows)
 ![Status](https://img.shields.io/badge/Status-Beta-orange)
 [![Release](https://img.shields.io/github/v/release/Vodkrox/Lithium-IDE?label=Release&logo=github&color=brightgreen)](https://github.com/Vodkrox/Lithium-IDE/releases)
 
