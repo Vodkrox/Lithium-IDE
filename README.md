@@ -2,10 +2,9 @@
 Open Source **AI IDE** that runs **fully locally**.
 
 ![banner](/src/assets/lithium_banner.png)
-![Python](https://img.shields.io/badge/Python-3.13-blue?logo=python)
+![Python](https://img.shields.io/badge/Python-3-blue?logo=python)
 ![Linux](https://img.shields.io/badge/Linux-Supported-grey?logo=linux)
 ![Windows](https://img.shields.io/badge/Windows-Supported-blue?logo=windows)
-![License](https://img.shields.io/badge/License-GPLv3-red)
 ![Status](https://img.shields.io/badge/Status-Beta-orange)
 
 # Purpose
