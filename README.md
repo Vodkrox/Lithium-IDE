@@ -23,7 +23,7 @@ When you first open the IDE, you will be prompted to **install the required libr
 
 After restarting, you will be prompted to **download the AI model**. When the download is finished, **Lithium will restart once again**.
 
-After that, **you're ready to start coding**.
+After that, **you're ready to start**.
 
 # AI Capabilities
 
