@@ -69,6 +69,8 @@ class AISkillsExecutor:
         self.file_path_getter = file_path_getter
         self.project_folder_getter = project_folder_getter
         self.status_callback = status_callback
+        self.file_scope = "open_file"
+        self.allow_run_commands = False
 
         self._skills = {
             "add_lines": self._skill_add_lines,
@@ -479,6 +481,14 @@ class AISkillsExecutor:
                 result = self._preview_delete_lines_on_content(simulated_content, params)
             elif skill_name in ("replace_file", "overwrite_file"):
                 result = self._preview_replace_file_on_content(simulated_content, params)
+            elif self.file_scope == "workspace" and skill_name == "create_file":
+                result = self.preview_create_file(params)
+            elif self.file_scope == "workspace" and skill_name == "delete_file":
+                result = self.preview_delete_file(params)
+            elif self.file_scope == "workspace" and skill_name == "create_folder":
+                result = self.preview_create_folder(params)
+            elif self.file_scope == "workspace" and skill_name == "delete_folder":
+                result = self.preview_delete_folder(params)
             else:
                 result = AISkillResult(False, f"Unknown skill: {skill_name}")
 
@@ -580,6 +590,14 @@ class AISkillsExecutor:
             if new_content is not None:
                 self.editor_setter(new_content)
                 return AISkillResult(True, "File content replaced")
+        elif skill_name == "create_file":
+            return self._skill_create_file({"path": data.get("path", ""), "content": data.get("content", "")})
+        elif skill_name == "delete_file":
+            return self._skill_delete_file({"path": data.get("path", "")})
+        elif skill_name == "create_folder":
+            return self._skill_create_folder({"path": data.get("path", "")})
+        elif skill_name == "delete_folder":
+            return self._skill_delete_folder({"path": data.get("path", "")})
 
         return AISkillResult(False, "Failed to apply change")
 
@@ -693,13 +711,17 @@ class AISkillsExecutor:
         }
         return descriptions.get(skill_name, "No description available")
 
-    def generate_skill_prompt(self) -> str:
+    def configure_capabilities(self, file_scope="open_file", allow_run_commands=False):
+        self.file_scope = file_scope if file_scope in ("open_file", "workspace") else "open_file"
+        self.allow_run_commands = bool(allow_run_commands)
+
+    def generate_skill_prompt(self, file_scope="open_file") -> str:
         """
         Generate a concise prompt that explains available skills to the AI.
         This should be appended to the system prompt.
         Note: Only editor manipulation skills are available (no file/folder creation/deletion).
         """
-        return """
+        prompt = """
 You have skills to manipulate the current open file's content. Use XML tags in responses:
 
 <skill name="add_lines"><parameter name="line">N</parameter><parameter name="content">CODE</parameter></skill> - Insert code at line N
@@ -713,12 +735,11 @@ IMPORTANT INSTRUCTIONS:
 4. Use delete_lines to remove problematic code, then add_lines to insert correct code
 5. Ensure proper indentation and code structure
 6. If you need to add code at the end of a file, use line number that is beyond the last line
-7. You can only modify the currently open file - you cannot create, delete, or modify other files or folders
-8. If the current file contains plain text or unrelated content and the user asks for code, delete or replace the invalid lines first; do not append code below invalid content
-9. If you predict the final file would not compile/run, use delete_lines and add_lines until the proposed final content is valid
-10. When replacing a line, use delete_lines for the old line and add_lines at the same line number for the corrected line
-11. When the user asks you to edit/generate code in the current file, output ONLY skill XML blocks. Do not output explanations, reminders, or instructions about XML.
-12. Never answer with generic text such as "XML tags must be well-formed" or "Propose the changes". Actually emit the required <skill> tags.
+7. If the current file contains plain text or unrelated content and the user asks for code, delete or replace the invalid lines first; do not append code below invalid content
+8. If you predict the final file would not compile/run, use delete_lines and add_lines until the proposed final content is valid
+9. When replacing a line, use delete_lines for the old line and add_lines at the same line number for the corrected line
+10. When the user asks you to edit/generate code in the current file, output ONLY skill XML blocks. Do not output explanations, reminders, or instructions about XML.
+11. Never answer with generic text such as "XML tags must be well-formed" or "Propose the changes". Actually emit the required <skill> tags.
 
 Example workflow:
 - Read the current code
@@ -736,6 +757,21 @@ The correct proposal is:
 
 When a change is needed, your final answer must look like the XML above, not like a description of what should be done.
 """
+        if file_scope == "workspace":
+            prompt += """
+WORKSPACE SKILLS (paths relative to the opened project folder):
+<skill name="create_file"><parameter name="path">relative/path.py</parameter><parameter name="content">CODE</parameter></skill>
+<skill name="delete_file"><parameter name="path">relative/path.py</parameter></skill>
+<skill name="create_folder"><parameter name="path">relative/folder</parameter></skill>
+<skill name="delete_folder"><parameter name="path">relative/folder</parameter></skill>
+
+You may modify files anywhere under the opened folder tree, not only the currently open file.
+"""
+        else:
+            prompt += """
+SCOPE: You can only modify the currently open file - you cannot create, delete, or modify other files or folders.
+"""
+        return prompt
 
 
 _default_executor = None
