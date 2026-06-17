@@ -1,4 +1,4 @@
-# Lithium-IDE
+# Lithium IDE
 Open Source **AI IDE** that runs **fully locally**.
 
 ![banner](/src/assets/lithium_banner.png)
