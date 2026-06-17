@@ -5,7 +5,8 @@ Open Source **AI IDE** that runs **fully locally**.
 ![Python](https://img.shields.io/badge/Python-3-blue?logo=python)
 ![Windows](https://img.shields.io/badge/Windows-Supported-blue?logo=windows)
 ![Status](https://img.shields.io/badge/Status-Beta-orange)
-![GitHub release](https://img.shields.io/github/v/Release/Vodkrox/Lithium-IDE?color=brightgreen)
+![Release](https://img.shields.io/github/v/release/Vodkrox/Lithium-IDE?label=Release&logo=github&color=brightgreen)
+
 # Purpose
 Provide a fully functional, out-of-the-box AI-powered IDE suitable for everyday development, without relying on paid APIs or third-party servers outside the user's control. It is not designed for Vibe-Coding, but for assistance with the code
 
