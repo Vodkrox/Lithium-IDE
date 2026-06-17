@@ -52,8 +52,8 @@ def get_python_executable() -> str:
         return sys.executable
 
     # --- Frozen / PyInstaller build ---
-    # Try common interpreter names on PATH
-    for name in ("python3", "python"):
+    # Try common interpreter names on PATH (including the Windows py launcher)
+    for name in ("py", "python3", "python"):
         found = shutil.which(name)
         if found:
             return found
@@ -114,6 +114,31 @@ def can_import_module(module_name: str) -> bool:
 _external_site_packages_applied = False
 
 
+def register_package_dll_dirs(package_name: str) -> None:
+    """
+    Register native library directories for *package_name* on Windows so
+    extension modules loaded from external site-packages can resolve DLLs
+    when running inside a PyInstaller bundle.
+    """
+    if not hasattr(os, "add_dll_directory"):
+        return
+
+    normalized = package_name.replace(".", os.sep)
+    seen = set()
+    for search_path in sys.path:
+        pkg_dir = os.path.join(search_path, normalized)
+        if not os.path.isdir(pkg_dir):
+            continue
+        for candidate in (os.path.join(pkg_dir, "lib"), pkg_dir):
+            if not os.path.isdir(candidate) or candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                os.add_dll_directory(candidate)
+            except Exception:
+                pass
+
+
 def extend_path_with_external_site_packages() -> None:
     """
     When frozen, prepend the external Python site-packages directories to
@@ -146,6 +171,14 @@ def extend_path_with_external_site_packages() -> None:
                 path = line.strip()
                 if path and path not in sys.path:
                     sys.path.insert(0, path)
+            register_package_dll_dirs("llama_cpp")
         _external_site_packages_applied = True
     except Exception:
         pass
+
+
+def prepare_frozen_python_runtime() -> None:
+    """Make pip-installed packages visible when running as a PyInstaller binary."""
+    if getattr(sys, "frozen", False):
+        extend_path_with_external_site_packages()
+        register_package_dll_dirs("llama_cpp")

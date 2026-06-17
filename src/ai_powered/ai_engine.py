@@ -1,5 +1,7 @@
 import os
+import subprocess
 import sys
+import tempfile
 import urllib.request
 from urllib.parse import urlparse
 
@@ -45,23 +47,37 @@ def _safe_import_transformers():
         return None
 
 
+def _subprocess_creationflags():
+    if sys.platform == "win32":
+        return subprocess.CREATE_NO_WINDOW
+    return 0
+
+
 def _safe_import_llama_cpp():
+    from src.utils import prepare_frozen_python_runtime, register_package_dll_dirs
+
+    if getattr(sys, "frozen", False):
+        prepare_frozen_python_runtime()
+    else:
+        register_package_dll_dirs("llama_cpp")
+
     try:
         from llama_cpp import Llama
         return Llama
     except Exception:
         pass
 
-    if getattr(sys, "frozen", False):
-        from src.utils import extend_path_with_external_site_packages
-        extend_path_with_external_site_packages()
-        try:
-            from llama_cpp import Llama
-            return Llama
-        except Exception:
-            pass
-
     return None
+
+
+def _can_use_external_llama_cpp():
+    from src.utils import can_import_module, get_python_executable
+
+    if not getattr(sys, "frozen", False):
+        return False
+    if get_python_executable() == sys.executable:
+        return False
+    return can_import_module("llama_cpp")
 
 
 def _normalize_source(source):
@@ -270,9 +286,95 @@ def find_local_model():
     return None
 
 
+_LLAMA_CPP_RUNNER = r"""
+import sys
+from llama_cpp import Llama
+
+model_path = sys.argv[1]
+prompt_path = sys.argv[2]
+max_tokens = int(sys.argv[3])
+
+with open(prompt_path, "r", encoding="utf-8") as handle:
+    prompt = handle.read()
+
+llm = Llama(
+    model_path=model_path,
+    n_ctx=8192,
+    n_batch=512,
+    verbose=False,
+)
+response = llm(
+    prompt=prompt,
+    max_tokens=max_tokens,
+    temperature=0.5,
+    top_p=0.85,
+    repeat_penalty=1.1,
+    stop=["<|im_end|>", "<|im_start|>user", "<|im_start|>system"],
+)
+if isinstance(response, dict):
+    choices = response.get("choices") or []
+    if choices:
+        print(choices[0].get("text", "").strip())
+    else:
+        print("")
+else:
+    print(str(response).strip())
+"""
+
+
+def _extract_llama_cpp_text(response):
+    if isinstance(response, dict):
+        choices = response.get("choices") or []
+        if choices:
+            return choices[0].get("text", "").strip()
+    return str(response).strip()
+
+
+def _generate_with_llama_cpp_external(model_path, prompt, max_tokens=256):
+    from src.utils import get_python_executable
+
+    python_exe = get_python_executable()
+    if python_exe == sys.executable:
+        raise RuntimeError(
+            "The model is a GGUF model, but llama-cpp-python is not available. "
+            "Install Python 3 and run: pip install llama-cpp-python"
+        )
+
+    prompt_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".txt",
+            delete=False,
+        ) as handle:
+            handle.write(prompt)
+            prompt_path = handle.name
+
+        result = subprocess.run(
+            [python_exe, "-c", _LLAMA_CPP_RUNNER, model_path, prompt_path, str(max_tokens)],
+            capture_output=True,
+            text=True,
+            timeout=900,
+            creationflags=_subprocess_creationflags(),
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(
+                "llama-cpp-python failed while running from the external Python interpreter. "
+                f"{detail}"
+            )
+        return result.stdout.strip()
+    finally:
+        if prompt_path and os.path.exists(prompt_path):
+            os.remove(prompt_path)
+
+
 def _generate_with_llama_cpp(model_path, prompt, max_tokens=256):
     Llama = _safe_import_llama_cpp()
     if Llama is None:
+        if _can_use_external_llama_cpp():
+            return _generate_with_llama_cpp_external(model_path, prompt, max_tokens=max_tokens)
         raise RuntimeError("The llama-cpp backend is not installed.")
 
     if model_path not in _model_cache:
@@ -293,11 +395,7 @@ def _generate_with_llama_cpp(model_path, prompt, max_tokens=256):
         stop=["<|im_end|>", "<|im_start|>user", "<|im_start|>system"],
     )
 
-    if isinstance(response, dict):
-        choices = response.get("choices") or []
-        if choices:
-            return choices[0].get("text", "").strip()
-    return str(response).strip()
+    return _extract_llama_cpp_text(response)
 
 
 def _generate_with_transformers(model_path, prompt, max_tokens=256):
@@ -376,12 +474,6 @@ def generate_text_from_model(model_source, system_prompt, user_prompt, max_token
                 break
 
     if is_gguf:
-        llama_cpp = _safe_import_llama_cpp()
-        if llama_cpp is None:
-            raise RuntimeError(
-                "The model is a GGUF model, but llama-cpp-python is not installed. "
-                "Install it to run this model."
-            )
         return _generate_with_llama_cpp(gguf_path, prompt_text, max_tokens=max_tokens)
     else:
         transformers_impl = _safe_import_transformers()

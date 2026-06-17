@@ -17,7 +17,7 @@ from src.ai_powered.ai_skills import get_executor as get_ai_skills_executor, res
 from src.ai_powered.conversation_manager import get_conversation_manager, Conversation
 from src.file_explorer import FileExplorer
 from src.splash import SplashScreen
-from src.utils import resource_path, can_import_module
+from src.utils import resource_path, can_import_module, prepare_frozen_python_runtime
 
 
 class LithiumIDE:
@@ -52,6 +52,7 @@ class LithiumIDE:
 
         self.file_or_folder_opened = False
 
+        prepare_frozen_python_runtime()
         self.root.after(100, self.check_and_setup_dependencies)
 
         self.settings_manager = SettingsManager()
@@ -1288,6 +1289,7 @@ Example prompts:
             progress_bar.stop()
             progress_bar.config(mode="determinate", value=100)
             progress_label.config(text="Installation completed successfully!")
+            prepare_frozen_python_runtime()
             messagebox.showinfo("Setup Complete", "All dependencies have been installed successfully. Starting Lithium IDE.")
             setup_win.destroy()
 

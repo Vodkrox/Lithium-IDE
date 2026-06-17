@@ -1,12 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_dynamic_libs
+
+binaries = []
+hiddenimports = []
+
+try:
+    binaries += collect_dynamic_libs("llama_cpp")
+    hiddenimports += ["llama_cpp", "llama_cpp.llama_cpp"]
+except Exception:
+    pass
 
 a = Analysis(
     ['base.py'],
     pathex=[],
-    binaries=[],
+    binaries=binaries,
     datas=[('src/assets', 'src/assets')],
-    hiddenimports=[],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
