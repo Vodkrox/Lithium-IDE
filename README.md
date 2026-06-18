@@ -70,7 +70,7 @@ A **dynamic system prompt** configures the model to provide the **best possible 
 
 # Themes
 
-Themes are **embedded into the binary**.
+Themes are **NOT embedded into the binary**.
 
 If you are using the **Python version**, you can install additional themes by placing them in `src/themes`.
 
