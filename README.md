@@ -30,7 +30,7 @@ After that, **you're ready to start**.
 - **Edit** the current file or folder
 - **Edit** other files or folders
 - **Search the web** (Alpha)
-- **Reason**
+- **Reasoning**
 - **Explain code**
 - **Auto-approve changes**
 - **Run commands**
