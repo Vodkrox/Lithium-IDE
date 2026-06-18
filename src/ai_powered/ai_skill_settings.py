@@ -1,4 +1,4 @@
-"""Persistent toggles for AI chat skills."""
+"""Toggles for AI chat skills."""
 
 SETTINGS_KEYS = {
     "file_scope": "ai_skill_file_scope",
