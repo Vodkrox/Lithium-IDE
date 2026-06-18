@@ -177,6 +177,16 @@ class LithiumIDE:
             check_callback=self.on_editor_change
         )
 
+        from src.syntax import SyntaxHighlighter
+        self.syntax_highlighter = SyntaxHighlighter(
+            self.editor,
+            language_getter=lambda: self.selected_lang.get(),
+        )
+        self.syntax_highlighter.highlight_all()
+        self.editor.bind("<KeyRelease>", lambda e: self.syntax_highlighter.schedule_highlight(), add="+")
+        self.editor.bind("<MouseWheel>", lambda e: self.syntax_highlighter.schedule_highlight(), add="+")
+
+
         theme.apply_theme(
             self.root,
             self.editor,
@@ -652,6 +662,8 @@ class LithiumIDE:
         if icon_key not in self.icons:
             icon_key = "generic"
         self.btn_lang.config(text=f" {lang} ▾", image=self.icons.get(icon_key, ""))
+        if hasattr(self, 'syntax_highlighter'):
+            self.syntax_highlighter.highlight_all()
 
     def build_ai_menu(self):
         self.ai_menu.delete(0, tk.END)
