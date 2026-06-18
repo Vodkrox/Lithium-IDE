@@ -1,33 +1,29 @@
-import os
 import json
+import os
+import sys
 import tkinter as tk
 from tkinter import ttk
 
 DEFAULT_GRAPHITE = {
-  "bg_dark": "#000000",
-  "bg_editor": "#080808",
-  "bg_header": "#000000",
-
-  "fg_light": "#FFFFFF",
-  "fg_dim": "#7D8794",
-
-  "accent": "#4DA3FF",
-  "accent_hover": "#2F7DD1",
-
-  "console_bg": "#080808",
-  "console_fg": "#E6EDF3",
-  "console_err": "#FF5C5C",
-
-  "sash_color": "#000000",
-  "selection_bg": "#1A1A1A",
-
-  "line_number_fg": "#4B5563",
-
-  "success": "#7EE787",
-  "error": "#FF5C5C"
+    "bg_dark": "#000000",
+    "bg_editor": "#080808",
+    "bg_header": "#000000",
+    "fg_light": "#FFFFFF",
+    "fg_dim": "#7D8794",
+    "accent": "#4DA3FF",
+    "accent_hover": "#2F7DD1",
+    "console_bg": "#080808",
+    "console_fg": "#E6EDF3",
+    "console_err": "#FF5C5C",
+    "sash_color": "#000000",
+    "selection_bg": "#1A1A1A",
+    "line_number_fg": "#4B5563",
+    "success": "#7EE787",
+    "error": "#FF5C5C",
 }
 
 THEMES = {}
+
 
 def load_themes():
     THEMES.clear()
@@ -45,7 +41,9 @@ def load_themes():
     if "Graphite" not in THEMES:
         THEMES["Graphite (Default)"] = DEFAULT_GRAPHITE
 
+
 load_themes()
+
 
 def _complete_theme(theme_data):
     """Return a complete color palette for a theme.
@@ -71,18 +69,30 @@ def _complete_theme(theme_data):
 
 def get_color(name, fallback=None):
     """Read a color from the active theme with a safe fallback."""
-    return COLORS.get(name, fallback if fallback is not None else DEFAULT_GRAPHITE.get(name, "#ffffff"))
+    return COLORS.get(
+        name,
+        fallback if fallback is not None else DEFAULT_GRAPHITE.get(name, "#ffffff"),
+    )
 
 
 CURRENT_THEME = "Graphite"
 COLORS = _complete_theme(THEMES.get(CURRENT_THEME, DEFAULT_GRAPHITE))
 
+if sys.platform == "win32":
+    _FONT_UI = "Segoe UI"
+    _FONT_MONO = "Consolas"
+else:
+    # Linux / macOS — fuentes compatibles
+    _FONT_UI = "DejaVu Sans"
+    _FONT_MONO = "DejaVu Sans Mono"
+
 FONTS = {
-    "ui": ("Segoe UI", 10),
-    "header": ("Segoe UI", 9, "bold"),
-    "editor": ("Consolas", 12),
-    "console": ("Consolas", 11)
+    "ui": (_FONT_UI, 10),
+    "header": (_FONT_UI, 9, "bold"),
+    "editor": (_FONT_MONO, 12),
+    "console": (_FONT_MONO, 11),
 }
+
 
 def set_theme(theme_name):
     global CURRENT_THEME
@@ -91,7 +101,19 @@ def set_theme(theme_name):
         COLORS.clear()
         COLORS.update(_complete_theme(THEMES[theme_name]))
 
-def apply_theme(root, editor, console, paned_window, editor_label, console_label, line_numbers, status_bar, toolbar=None, toolbar_divider=None):
+
+def apply_theme(
+    root,
+    editor,
+    console,
+    paned_window,
+    editor_label,
+    console_label,
+    line_numbers,
+    status_bar,
+    toolbar=None,
+    toolbar_divider=None,
+):
     root.configure(bg=COLORS["bg_dark"])
 
     if toolbar:
@@ -110,11 +132,11 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
         lightcolor=COLORS["bg_dark"],
         troughcolor=COLORS["bg_editor"],
         bordercolor=COLORS["bg_dark"],
-        arrowcolor=COLORS["fg_dim"]
+        arrowcolor=COLORS["fg_dim"],
     )
     style.map(
         "TScrollbar",
-        background=[("active", COLORS["sash_color"]), ("pressed", COLORS["accent"])]
+        background=[("active", COLORS["sash_color"]), ("pressed", COLORS["accent"])],
     )
 
     editor_label.config(
@@ -124,7 +146,7 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
         padx=12,
         pady=8,
         bd=0,
-        anchor="w"
+        anchor="w",
     )
     console_label.config(
         bg=COLORS["bg_header"],
@@ -133,7 +155,7 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
         padx=12,
         pady=8,
         bd=0,
-        anchor="w"
+        anchor="w",
     )
 
     editor.config(
@@ -146,7 +168,7 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
         padx=10,
         pady=10,
         bd=0,
-        highlightthickness=0
+        highlightthickness=0,
     )
 
     line_numbers.config(
@@ -158,7 +180,7 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
         bd=0,
         width=4,
         state=tk.DISABLED,
-        highlightthickness=0
+        highlightthickness=0,
     )
 
     console.config(
@@ -171,31 +193,20 @@ def apply_theme(root, editor, console, paned_window, editor_label, console_label
         padx=12,
         pady=12,
         bd=0,
-        highlightthickness=0
+        highlightthickness=0,
     )
 
-    status_bar.config(
-        bg=COLORS["bg_header"],
-        bd=0,
-        relief=tk.FLAT
-    )
+    status_bar.config(bg=COLORS["bg_header"], bd=0, relief=tk.FLAT)
 
     paned_window.config(
-        bg=COLORS["bg_dark"],
-        bd=0,
-        sashwidth=4,
-        sashpad=1,
-        sashrelief=tk.FLAT
+        bg=COLORS["bg_dark"], bd=0, sashwidth=4, sashpad=1, sashrelief=tk.FLAT
     )
+
 
 def style_search_dialog(dialog, search_entry, listbox, title_label):
     dialog.configure(bg=COLORS["bg_dark"])
 
-    title_label.config(
-        bg=COLORS["bg_dark"],
-        fg=COLORS["accent"],
-        font=FONTS["header"]
-    )
+    title_label.config(bg=COLORS["bg_dark"], fg=COLORS["accent"], font=FONTS["header"])
 
     search_entry.config(
         bg=COLORS["bg_editor"],
@@ -205,7 +216,7 @@ def style_search_dialog(dialog, search_entry, listbox, title_label):
         bd=0,
         highlightthickness=1,
         highlightbackground=COLORS["sash_color"],
-        highlightcolor=COLORS["accent"]
+        highlightcolor=COLORS["accent"],
     )
 
     listbox.config(
@@ -217,8 +228,9 @@ def style_search_dialog(dialog, search_entry, listbox, title_label):
         highlightbackground=COLORS["sash_color"],
         highlightcolor=COLORS["accent"],
         selectbackground=COLORS["accent"],
-        selectforeground=COLORS["bg_dark"]
+        selectforeground=COLORS["bg_dark"],
     )
+
 
 def style_autocomplete(popup, listbox):
     popup.configure(bg=COLORS["bg_dark"])
@@ -231,8 +243,9 @@ def style_autocomplete(popup, listbox):
         highlightbackground=COLORS["sash_color"],
         highlightcolor=COLORS["accent"],
         selectbackground=COLORS["accent"],
-        selectforeground=COLORS["bg_dark"]
+        selectforeground=COLORS["bg_dark"],
     )
+
 
 def style_toolbar_button(button):
     button.config(
@@ -245,15 +258,18 @@ def style_toolbar_button(button):
         padx=12,
         pady=5,
         relief=tk.FLAT,
-        cursor="hand2"
+        cursor="hand2",
     )
+
     def on_enter(e):
         button.config(bg=COLORS["sash_color"], fg=COLORS["accent"])
+
     def on_leave(e):
         button.config(bg=COLORS["bg_header"], fg=COLORS["fg_light"])
 
     button.bind("<Enter>", on_enter)
     button.bind("<Leave>", on_leave)
+
 
 def _invert_hex_color(color):
     if not isinstance(color, str) or not color.startswith("#"):
@@ -278,7 +294,5 @@ def style_menu(menu):
         activeforeground=COLORS["bg_dark"],
         selectcolor=_invert_hex_color(COLORS["bg_header"]),
         bd=1,
-        relief=tk.FLAT
+        relief=tk.FLAT,
     )
-
-
