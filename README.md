@@ -81,9 +81,9 @@ If you create a new theme, please submit a **pull request** to the **Awesome-Lit
 # Requirements 
 (Install with:  pip install -r requirements.txt)
 
-Pillow>=10.0.0
-llama-cpp-python>=0.2.0
-huggingface_hub>=0.20.0
+- Pillow>=10.0.0
+- llama-cpp-python>=0.2.0
+- huggingface_hub>=0.20.0
 
 
 ## Run from source
