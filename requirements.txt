@@ -1,0 +1,17 @@
+# =============================================================================
+# Lithium IDE - Runtime Dependencies
+# =============================================================================
+# Install with:  pip install -r requirements.txt
+# =============================================================================
+
+# Image processing for the splash screen and icons
+Pillow>=10.0.0
+
+# --- AI backend (local LLM support) ---
+
+# GGUF model inference via llama.cpp.
+llama-cpp-python>=0.2.0
+
+# --- Model downloading ---
+huggingface_hub>=0.20.0
+
