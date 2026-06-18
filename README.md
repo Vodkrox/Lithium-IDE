@@ -93,5 +93,3 @@ cd Lithium-IDE
 pip install -r requirements.txt
 python base.py
 ```
-# Notes
-This project is not intended for “vibe coding” or fully autonomous generation workflows.
