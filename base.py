@@ -199,6 +199,10 @@ class LithiumIDE:
 
         self.editor.config(yscrollcommand=on_editor_scroll)
 
+        # Bind to <<Modified>> BEFORE the syntax highlighter does,
+        # so we capture dirty state before the highlighter resets edit_modified().
+        self.editor.bind("<<Modified>>", self._on_editor_modified, add="+")
+
         self.autocomplete = LithiumAutocompleteManager(
             self.editor, self.selected_lang, check_callback=self.on_editor_change
         )
@@ -312,6 +316,7 @@ class LithiumIDE:
 
         self.ai_skills_executor = None
         self._init_ai_skills()
+        self._pending_retry_info = None  # (prompt, retry_count) for reject-and-retry
 
         if self.ai_model_link:
             self.status_label.config(text=f"AI: configured model {self.ai_model_link}")
@@ -348,7 +353,7 @@ class LithiumIDE:
 
         self.active_menu = None
 
-        self.editor.bind("<KeyRelease>", self.on_editor_change)
+        self.editor.bind("<KeyRelease>", self.on_editor_change, add="+")
         self.editor.bind("<ButtonRelease-1>", lambda e: self.controller.update_status())
         self.editor.bind(
             "<MouseWheel>",
@@ -550,9 +555,12 @@ class LithiumIDE:
 
         threading.Thread(target=self.load_languages_async, daemon=True).start()
 
-    def on_editor_change(self, event=None):
+    def _on_editor_modified(self, event=None):
+        """Called on <<Modified>> — fires before the syntax highlighter resets edit_modified()."""
         if self.controller.editor.edit_modified():
             self.controller.mark_dirty()
+
+    def on_editor_change(self, event=None):
         self.controller.update_line_numbers()
         self.controller.update_status()
         self.autocomplete.check_autocomplete(event)
@@ -2032,24 +2040,94 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
 
         return response
 
-    def run_chat_ai(self, prompt):
+    def _retry_rejected_ai(self):
+        """Re-run the AI when the user rejects its proposed changes."""
+        if not self._pending_retry_info:
+            return
+
+        original_prompt, retry_count = self._pending_retry_info
+        max_retries = 3
+
+        if retry_count >= max_retries:
+            self.append_to_chat_history(
+                "System",
+                f"Rejected {max_retries} times. Please rephrase your request.",
+            )
+            self._pending_retry_info = None
+            return
+
+        self._pending_retry_info = (original_prompt, retry_count + 1)
+
+        retry_hints = {
+            0: "The user rejected your answer. Write COMPLETE, production-ready code — no skeletons, no placeholders, no stubs. Build it fully.",
+            1: "Still rejected. Your approach was probably too simplistic. Implement the full feature with proper error handling, all callbacks, and a polished UI.",
+            2: "Last attempt. Be thorough — write the entire implementation end-to-end. Include every button, every handler, every layout detail.",
+        }
+        hint = retry_hints.get(
+            retry_count,
+            "The user rejected your suggestion. Try a completely different approach.",
+        )
+
+        retry_instruction = f"""
+
+IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you just proposed.
+{hint}
+"""
+        retry_prompt = original_prompt + retry_instruction
+        threading.Thread(
+            target=self.run_chat_ai,
+            args=(retry_prompt,),
+            kwargs={"is_retry": True},
+            daemon=True,
+        ).start()
+
+    def run_chat_ai(self, prompt, is_retry=False):
         self.root.after(0, lambda: self.status_label.config(text="AI: Loading..."))
 
         self._show_loading_indicator()
+
+        if not is_retry:
+            self._pending_retry_info = (prompt, 0)
 
         try:
             editor_prompt = self._build_ai_editor_prompt(prompt)
             inference_params = dict(self.ai_inference_params)
             if self.ai_skill_settings.get("reasoning"):
-                base_tokens = inference_params.get("max_tokens", 352)
+                base_tokens = inference_params.get("max_tokens", 768)
                 inference_params["max_tokens"] = int(base_tokens * 1.35)
 
-            response = ai_runner.generate_text_from_model(
-                self.ai_model_link,
-                self.ai_system_prompt,
-                editor_prompt,
-                **inference_params,
-            )
+            max_attempts = 2
+            last_error = None
+            response = ""
+            for attempt in range(max_attempts):
+                try:
+                    response = ai_runner.generate_text_from_model(
+                        self.ai_model_link,
+                        self.ai_system_prompt,
+                        editor_prompt,
+                        **inference_params,
+                    )
+                    if response and response.strip():
+                        break
+                except Exception as e:
+                    last_error = e
+                    print(
+                        f"AI generation attempt {attempt + 1}/{max_attempts} failed: {e}"
+                    )
+                    # Reduce temperature on retry for better chance
+                    inference_params["temperature"] = max(
+                        0.1, inference_params.get("temperature", 0.5) - 0.2
+                    )
+
+            if not response or not response.strip():
+                if last_error:
+                    raise RuntimeError(
+                        f"Model returned no valid response after {max_attempts} attempts: {last_error}"
+                    )
+                raise RuntimeError(
+                    f"Model returned empty response after {max_attempts} attempts"
+                )
+
             response = self._retry_if_broken_ai_edit_response(
                 prompt, editor_prompt, response
             )
@@ -2381,18 +2459,13 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
 
             tk.Label(
                 btn_frame,
-                text="✗ Rejected",
+                text="✗ Rejected — retrying...",
                 font=("DejaVu Sans", 9, "bold"),
                 fg=theme.COLORS.get("error", "#F07178"),
                 bg=theme.COLORS.get("bg_dark", "#0B0D10"),
             ).pack(side=tk.LEFT, padx=5)
 
-            self.root.after(
-                500,
-                lambda: self._show_approval_dialog(
-                    index + 1, pending_approvals, all_results, clean_response
-                ),
-            )
+            self._retry_rejected_ai()
 
         approve_btn = tk.Button(
             btn_frame,
@@ -2524,6 +2597,44 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
                 self.chat_history.insert(tk.END, "\n")
             else:
                 self.chat_history.insert(tk.END, part)
+
+        # Add Reject button after AI responses (not errors, skills, or system msgs)
+        if sender == "AI" and self._pending_retry_info:
+            reject_frame = tk.Frame(
+                self.chat_history, bg=theme.COLORS.get("bg_dark", "#0B0D10")
+            )
+
+            def reject_response():
+                for widget in reject_frame.winfo_children():
+                    widget.destroy()
+                tk.Label(
+                    reject_frame,
+                    text="✗ Rejected — retrying...",
+                    font=("DejaVu Sans", 9, "bold"),
+                    fg=theme.COLORS.get("error", "#F07178"),
+                    bg=theme.COLORS.get("bg_dark", "#0B0D10"),
+                ).pack(side=tk.LEFT, padx=5)
+                self._retry_rejected_ai()
+
+            reject_btn = tk.Button(
+                reject_frame,
+                text="✗ Reject",
+                font=("DejaVu Sans", 9),
+                bd=0,
+                padx=14,
+                pady=4,
+                cursor="hand2",
+                command=reject_response,
+                bg=theme.COLORS.get("sash_color", "#1F2833"),
+                fg=theme.COLORS.get("fg_light", "#E5E9F0"),
+                activebackground=theme.COLORS.get("sash_color", "#1F2833"),
+                activeforeground=theme.COLORS.get("accent", "#7C9EFF"),
+                relief=tk.FLAT,
+            )
+            reject_btn.pack(side=tk.LEFT, padx=5, pady=(4, 0))
+
+            self.chat_history.window_create(tk.END, window=reject_frame)
+            self.chat_history.insert(tk.END, "\n")
 
         self.chat_history.see(tk.END)
         self.chat_history.config(state=tk.DISABLED)

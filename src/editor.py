@@ -1,11 +1,24 @@
-import os
 import json
+import os
 import tkinter as tk
 from tkinter import filedialog
+
 from .settings import SettingsManager
 
+
 class LithiumEditorController:
-    def __init__(self, root, editor, line_numbers, status_bar, selected_lang, editor_label, on_file_open_callback=None, require_explorer_open=False, settings_manager=None):
+    def __init__(
+        self,
+        root,
+        editor,
+        line_numbers,
+        status_bar,
+        selected_lang,
+        editor_label,
+        on_file_open_callback=None,
+        require_explorer_open=False,
+        settings_manager=None,
+    ):
         self.root = root
         self.editor = editor
         self.line_numbers = line_numbers
@@ -23,7 +36,7 @@ class LithiumEditorController:
         self.line_numbers.config(state=tk.NORMAL)
         self.line_numbers.delete(1.0, tk.END)
 
-        end_line_str = self.editor.index('end-1c').split('.')[0]
+        end_line_str = self.editor.index("end-1c").split(".")[0]
         end_line = int(end_line_str) if end_line_str else 1
 
         line_numbers_content = "\n".join(str(i) for i in range(1, end_line + 1))
@@ -36,7 +49,7 @@ class LithiumEditorController:
 
     def update_status(self, event=None):
         pos = self.editor.index(tk.INSERT)
-        line, col = pos.split('.')
+        line, col = pos.split(".")
         lang = self.selected_lang.get()
         path = os.path.basename(self.file_path) if self.file_path else "Untitled"
         self.status_bar.config(text=f"{path}  |  Ln {line}, Col {col}  |  {lang}   ")
@@ -48,7 +61,9 @@ class LithiumEditorController:
 
     def _notify_dirty_state(self):
         if self.on_dirty_state_changed_callback:
-            self.on_dirty_state_changed_callback(self.file_path, self.has_unsaved_changes)
+            self.on_dirty_state_changed_callback(
+                self.file_path, self.has_unsaved_changes
+            )
 
     def mark_dirty(self):
         if not self.has_unsaved_changes:
@@ -86,7 +101,9 @@ class LithiumEditorController:
             self.on_file_open_callback()
 
     def open_file(self):
-        path = filedialog.askopenfilename(filetypes=[("All Files", "*.*"), ("Python Files", "*.py")])
+        path = filedialog.askopenfilename(
+            filetypes=[("All Files", "*.*"), ("Python Files", "*.py")]
+        )
         if path:
             self.file_path = path
             self.editor.config(state=tk.NORMAL)
@@ -101,7 +118,10 @@ class LithiumEditorController:
             self.update_status()
             if self.on_file_open_callback:
                 self.on_file_open_callback()
-            if hasattr(self, 'on_single_file_open_callback') and self.on_single_file_open_callback:
+            if (
+                hasattr(self, "on_single_file_open_callback")
+                and self.on_single_file_open_callback
+            ):
                 self.on_single_file_open_callback()
 
     def save_file(self):
@@ -109,12 +129,9 @@ class LithiumEditorController:
             try:
                 with open(self.file_path, "w", encoding="utf-8") as file:
                     file.write(self.editor.get(1.0, tk.END))
-                self.has_unsaved_changes = False
-                self.editor.edit_modified(False)
-                self.update_title()
+                self.mark_clean()
                 self.update_status()
                 self.save_cache()
-                self.mark_clean()
                 return True
             except Exception:
                 return False
@@ -124,24 +141,28 @@ class LithiumEditorController:
     def save_as_file(self):
         if self.require_explorer_open and not self.file_path:
             from tkinter import messagebox
-            messagebox.showinfo("Info", "Please create a new file from the File Explorer panel first.")
+
+            messagebox.showinfo(
+                "Info", "Please create a new file from the File Explorer panel first."
+            )
             return False
 
-        path = filedialog.asksaveasfilename(defaultextension=".py", filetypes=[("Python Files", "*.py"), ("All Files", "*.*")])
+        path = filedialog.asksaveasfilename(
+            defaultextension=".py",
+            filetypes=[("Python Files", "*.py"), ("All Files", "*.*")],
+        )
         if path:
             self.file_path = path
             with open(self.file_path, "w", encoding="utf-8") as file:
                 file.write(self.editor.get(1.0, tk.END))
-            self.has_unsaved_changes = False
             self.editor.edit_modified(False)
-            self.root.title(f"{os.path.basename(path)} - Lithium IDE")
-            self.update_title()
             self.update_line_numbers()
-            self.update_status()
             self.save_cache()
             if self.on_file_open_callback:
                 self.on_file_open_callback()
             self.mark_clean()
+            self.update_title()
+            self.update_status()
             return True
         return False
 

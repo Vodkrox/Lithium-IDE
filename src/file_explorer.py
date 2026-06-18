@@ -4,9 +4,10 @@ Provides a treeview-based file explorer panel that displays the current folder s
 """
 
 import os
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
 import shutil
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
 from src.utils import resource_path
 
 
@@ -48,7 +49,7 @@ class FileExplorer:
             text="EXPLORER",
             font=self.fonts["header"],
             fg=self.colors["fg_dim"],
-            bg=self.colors["bg_header"]
+            bg=self.colors["bg_header"],
         )
         self.header_label.pack(side=tk.LEFT, padx=12, pady=8)
 
@@ -62,7 +63,7 @@ class FileExplorer:
             activebackground=self.colors["sash_color"],
             activeforeground=self.colors["accent"],
             command=self.refresh,
-            cursor="hand2"
+            cursor="hand2",
         )
         self.btn_refresh.pack(side=tk.RIGHT, padx=4)
 
@@ -76,7 +77,7 @@ class FileExplorer:
             activebackground=self.colors["sash_color"],
             activeforeground=self.colors["accent"],
             command=self.collapse_all,
-            cursor="hand2"
+            cursor="hand2",
         )
         self.btn_collapse.pack(side=tk.RIGHT, padx=4)
 
@@ -94,7 +95,7 @@ class FileExplorer:
             activebackground=self.colors["sash_color"],
             activeforeground=self.colors["accent"],
             command=self.go_to_parent,
-            cursor="hand2"
+            cursor="hand2",
         )
         self.btn_back.pack(side=tk.LEFT, padx=(4, 6))
         self.btn_back.config(state=tk.DISABLED)
@@ -106,20 +107,18 @@ class FileExplorer:
             fg=self.colors["fg_dim"],
             bg=self.colors["bg_editor"],
             anchor="w",
-            padx=8
+            padx=8,
         )
         self.path_label.pack(fill=tk.X, expand=True)
 
         self.tree_frame = tk.Frame(self.frame, bg=self.colors["bg_editor"])
         self.tree_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=(4, 8))
 
-        self.tree = ttk.Treeview(
-            self.tree_frame,
-            show="tree",
-            selectmode="browse"
-        )
+        self.tree = ttk.Treeview(self.tree_frame, show="tree", selectmode="browse")
 
-        self.scrollbar = ttk.Scrollbar(self.tree_frame, orient="vertical", command=self.tree.yview)
+        self.scrollbar = ttk.Scrollbar(
+            self.tree_frame, orient="vertical", command=self.tree.yview
+        )
         self.tree.configure(yscrollcommand=self.scrollbar.set)
 
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -141,7 +140,7 @@ class FileExplorer:
             foreground=self.colors["fg_light"],
             fieldbackground=self.colors["bg_editor"],
             borderwidth=0,
-            font=self.fonts["ui"]
+            font=self.fonts["ui"],
         )
 
         style.configure(
@@ -149,13 +148,13 @@ class FileExplorer:
             background=self.colors["bg_header"],
             foreground=self.colors["fg_dim"],
             borderwidth=0,
-            font=self.fonts["header"]
+            font=self.fonts["header"],
         )
 
         style.map(
             "FileExplorer.Treeview",
             background=[("selected", self.colors["sash_color"])],
-            foreground=[("selected", self.colors["fg_light"])]
+            foreground=[("selected", self.colors["fg_light"])],
         )
 
         self.tree.configure(style="FileExplorer.Treeview")
@@ -163,27 +162,37 @@ class FileExplorer:
     def _load_icons(self):
         """Load icons for files and folders."""
         try:
-            self.icons["folder"] = tk.PhotoImage(file=resource_path("src/assets/folder.png"))
+            self.icons["folder"] = tk.PhotoImage(
+                file=resource_path("src/assets/folder.png")
+            )
         except Exception:
             self.icons["folder"] = None
 
         try:
-            self.icons["file"] = tk.PhotoImage(file=resource_path("src/assets/file.png"))
+            self.icons["file"] = tk.PhotoImage(
+                file=resource_path("src/assets/file.png")
+            )
         except Exception:
             self.icons["file"] = None
 
         try:
-            self.icons["python"] = tk.PhotoImage(file=resource_path("src/assets/python.png"))
+            self.icons["python"] = tk.PhotoImage(
+                file=resource_path("src/assets/python.png")
+            )
         except Exception:
             self.icons["python"] = None
 
         try:
-            self.icons["javascript"] = tk.PhotoImage(file=resource_path("src/assets/javascript.png"))
+            self.icons["javascript"] = tk.PhotoImage(
+                file=resource_path("src/assets/javascript.png")
+            )
         except Exception:
             self.icons["javascript"] = None
 
         try:
-            self.icons["html"] = tk.PhotoImage(file=resource_path("src/assets/html.png"))
+            self.icons["html"] = tk.PhotoImage(
+                file=resource_path("src/assets/html.png")
+            )
         except Exception:
             self.icons["html"] = None
 
@@ -193,7 +202,9 @@ class FileExplorer:
             self.icons["css"] = None
 
         try:
-            self.icons["generic"] = tk.PhotoImage(file=resource_path("src/assets/generic.png"))
+            self.icons["generic"] = tk.PhotoImage(
+                file=resource_path("src/assets/generic.png")
+            )
         except Exception:
             self.icons["generic"] = None
 
@@ -245,7 +256,11 @@ class FileExplorer:
 
         self.current_folder = folder_path
         self.path_label.config(text=folder_path)
-        if self.controller and hasattr(self.controller, "settings_manager") and self.controller.settings_manager:
+        if (
+            self.controller
+            and hasattr(self.controller, "settings_manager")
+            and self.controller.settings_manager
+        ):
             try:
                 self.controller.settings_manager.set("last_folder", folder_path)
             except Exception:
@@ -267,6 +282,7 @@ class FileExplorer:
                 self.btn_back.config(state=tk.DISABLED)
             except Exception:
                 pass
+
     def _find_item_by_path(self, parent, target_path):
         """Recursively search the tree for an item matching target_path and return its item id or None."""
         for child in self.tree.get_children(parent):
@@ -287,14 +303,14 @@ class FileExplorer:
         """
         if not file_path or not os.path.exists(file_path):
             return
-        item_id = self._find_item_by_path('', file_path)
+        item_id = self._find_item_by_path("", file_path)
         if not item_id:
             return
-        cur_text = self.tree.item(item_id, 'text') or ''
-        stripped = cur_text.replace(' *', '').replace(' • Unsaved', '').strip()
-        leading = ''
-        if cur_text.startswith('  '):
-            leading = '  '
+        cur_text = self.tree.item(item_id, "text") or ""
+        stripped = cur_text.replace(" *", "").replace(" • Unsaved", "").strip()
+        leading = ""
+        if cur_text.startswith("  "):
+            leading = "  "
         new_text = f"{leading}{stripped}{' *' if is_dirty else ''}"
         try:
             self.tree.item(item_id, text=new_text)
@@ -312,7 +328,10 @@ class FileExplorer:
             path: File system path
         """
         try:
-            items = sorted(os.listdir(path), key=lambda x: (not os.path.isdir(os.path.join(path, x)), x.lower()))
+            items = sorted(
+                os.listdir(path),
+                key=lambda x: (not os.path.isdir(os.path.join(path, x)), x.lower()),
+            )
         except PermissionError:
             return
 
@@ -323,12 +342,16 @@ class FileExplorer:
             item_path = os.path.join(path, item)
 
             if os.path.isdir(item_path):
-                node = tree.insert(parent, "end", text=f"📁 {item}", values=(item_path,), open=False)
+                node = tree.insert(
+                    parent, "end", text=f"📁 {item}", values=(item_path,), open=False
+                )
                 self._populate_tree(tree, node, item_path)
             else:
                 icon = self._get_icon_for_file(item)
                 if icon:
-                    tree.insert(parent, "end", text=f"  {item}", values=(item_path,), image=icon)
+                    tree.insert(
+                        parent, "end", text=f"  {item}", values=(item_path,), image=icon
+                    )
                 else:
                     tree.insert(parent, "end", text=f"  {item}", values=(item_path,))
 
@@ -357,50 +380,77 @@ class FileExplorer:
 
     def _open_file(self, path):
         """
-        Open a file in the editor.
+        Open a file in the editor. Prompts to save if current file has unsaved changes.
 
         Args:
             path: Path to the file to open
         """
-        if self.controller:
-            try:
-                file_size = os.path.getsize(path)
-                if file_size > 5 * 1024 * 1024:
-                    if not messagebox.askyesno(
-                        "Large File",
-                        f"The file '{os.path.basename(path)}' is large ({file_size / (1024*1024):.1f}MB). "
-                        "Opening it may slow down the editor. Do you want to continue?"
-                    ):
-                        return
-            except OSError:
-                pass
+        if not self.controller:
+            return
 
-            self.controller.file_path = path
+        # Check for unsaved changes before switching
+        if self.controller.has_unsaved_changes and self.controller.file_path:
+            current_name = os.path.basename(self.controller.file_path)
+            result = messagebox.askyesnocancel(
+                "Unsaved Changes",
+                f"'{current_name}' has unsaved changes.\n\n"
+                "Yes  = Save changes and open the new file\n"
+                "No   = Discard changes and open the new file\n"
+                "Cancel = Go back",
+            )
+            if result is None:  # Cancel
+                return
+            if result:  # Yes → save
+                if not self.controller.save_file():
+                    messagebox.showwarning(
+                        "Save Failed",
+                        "Could not save the current file. Open cancelled.",
+                    )
+                    return
+
+        try:
+            file_size = os.path.getsize(path)
+            if file_size > 5 * 1024 * 1024:
+                if not messagebox.askyesno(
+                    "Large File",
+                    f"The file '{os.path.basename(path)}' is large ({file_size / (1024 * 1024):.1f}MB). "
+                    "Opening it may slow down the editor. Do you want to continue?",
+                ):
+                    return
+        except OSError:
+            pass
+
+        self.controller.file_path = path
+        try:
+            with open(path, "r", encoding="utf-8") as file:
+                code = file.read()
+                self.controller.editor.config(state=tk.NORMAL)
+                self.controller.editor.delete("1.0", tk.END)
+                self.controller.editor.insert("1.0", code)
+            self.controller.root.title(f"{os.path.basename(path)} - Lithium IDE")
+            self.controller.update_line_numbers()
+            self.controller.update_status()
+            if self.controller.on_file_open_callback:
+                self.controller.on_file_open_callback()
+            self.controller.has_unsaved_changes = False
+            self.controller.mark_clean()
             try:
-                with open(path, "r", encoding="utf-8") as file:
-                    code = file.read()
-                    self.controller.editor.config(state=tk.NORMAL)
-                    self.controller.editor.delete("1.0", tk.END)
-                    self.controller.editor.insert("1.0", code)
-                self.controller.root.title(f"{os.path.basename(path)} - Lithium IDE")
-                self.controller.update_line_numbers()
-                self.controller.update_status()
-                if self.controller.on_file_open_callback:
-                    self.controller.on_file_open_callback()
-                self.controller.has_unsaved_changes = False
-                self.controller.mark_clean()
-                try:
-                    self.controller.save_cache()
-                except Exception:
-                    pass
-            except Exception as e:
-                messagebox.showerror("Error", f"Cannot open file: {e}")
+                self.controller.save_cache()
+            except Exception:
+                pass
+        except Exception as e:
+            messagebox.showerror("Error", f"Cannot open file: {e}")
 
     def _show_context_menu(self, event):
         """Show context menu on right-click."""
         item = self.tree.identify_row(event.y)
 
-        menu = tk.Menu(self.parent, tearoff=0, bg=self.colors["bg_header"], fg=self.colors["fg_light"])
+        menu = tk.Menu(
+            self.parent,
+            tearoff=0,
+            bg=self.colors["bg_header"],
+            fg=self.colors["fg_light"],
+        )
 
         if item:
             self.tree.selection_set(item)
@@ -412,24 +462,48 @@ class FileExplorer:
                 is_file = os.path.isfile(path)
 
                 if is_file:
-                    menu.add_command(label="Open", command=lambda: self._open_file(path))
+                    menu.add_command(
+                        label="Open", command=lambda: self._open_file(path)
+                    )
                     menu.add_separator()
-                    menu.add_command(label="Rename", command=lambda: self._rename_item(path, item))
-                    menu.add_command(label="Delete", command=lambda: self._delete_item(path, item))
+                    menu.add_command(
+                        label="Rename", command=lambda: self._rename_item(path, item)
+                    )
+                    menu.add_command(
+                        label="Delete", command=lambda: self._delete_item(path, item)
+                    )
                     menu.add_separator()
-                    menu.add_command(label="Copy Path", command=lambda: self._copy_path(path))
+                    menu.add_command(
+                        label="Copy Path", command=lambda: self._copy_path(path)
+                    )
                 elif is_dir:
-                    menu.add_command(label="Open Folder", command=lambda: self.load_folder(path))
+                    menu.add_command(
+                        label="Open Folder", command=lambda: self.load_folder(path)
+                    )
                     menu.add_separator()
-                    menu.add_command(label="New File", command=lambda: self._new_file(item))
-                    menu.add_command(label="New Folder", command=lambda: self._new_folder(item))
+                    menu.add_command(
+                        label="New File", command=lambda: self._new_file(item)
+                    )
+                    menu.add_command(
+                        label="New Folder", command=lambda: self._new_folder(item)
+                    )
                     menu.add_separator()
-                    menu.add_command(label="Rename", command=lambda: self._rename_item(path, item))
-                    menu.add_command(label="Delete", command=lambda: self._delete_item(path, item))
+                    menu.add_command(
+                        label="Rename", command=lambda: self._rename_item(path, item)
+                    )
+                    menu.add_command(
+                        label="Delete", command=lambda: self._delete_item(path, item)
+                    )
         else:
             if self.current_folder:
-                menu.add_command(label="New File", command=lambda: self._new_file_in_path(self.current_folder))
-                menu.add_command(label="New Folder", command=lambda: self._new_folder_in_path(self.current_folder))
+                menu.add_command(
+                    label="New File",
+                    command=lambda: self._new_file_in_path(self.current_folder),
+                )
+                menu.add_command(
+                    label="New Folder",
+                    command=lambda: self._new_folder_in_path(self.current_folder),
+                )
             else:
                 menu.add_command(label="Open Folder", command=self.open_folder_dialog)
 
@@ -452,7 +526,7 @@ class FileExplorer:
             text="Enter file name:",
             font=self.fonts["ui"],
             fg=self.colors["fg_light"],
-            bg=self.colors["bg_dark"]
+            bg=self.colors["bg_dark"],
         ).pack(pady=(15, 5))
 
         entry = tk.Entry(
@@ -463,7 +537,7 @@ class FileExplorer:
             insertbackground=self.colors["accent"],
             bd=0,
             highlightthickness=1,
-            highlightbackground=self.colors["sash_color"]
+            highlightbackground=self.colors["sash_color"],
         )
         entry.pack(fill=tk.X, padx=20, pady=5)
         entry.focus_set()
@@ -498,7 +572,7 @@ class FileExplorer:
             padx=15,
             pady=5,
             cursor="hand2",
-            command=create
+            command=create,
         ).pack(side=tk.LEFT, padx=5)
 
         tk.Button(
@@ -511,7 +585,7 @@ class FileExplorer:
             padx=15,
             pady=5,
             cursor="hand2",
-            command=dialog.destroy
+            command=dialog.destroy,
         ).pack(side=tk.LEFT, padx=5)
 
     def go_to_parent(self):
@@ -539,7 +613,7 @@ class FileExplorer:
             text="Enter folder name:",
             font=self.fonts["ui"],
             fg=self.colors["fg_light"],
-            bg=self.colors["bg_dark"]
+            bg=self.colors["bg_dark"],
         ).pack(pady=(15, 5))
 
         entry = tk.Entry(
@@ -550,7 +624,7 @@ class FileExplorer:
             insertbackground=self.colors["accent"],
             bd=0,
             highlightthickness=1,
-            highlightbackground=self.colors["sash_color"]
+            highlightbackground=self.colors["sash_color"],
         )
         entry.pack(fill=tk.X, padx=20, pady=5)
         entry.focus_set()
@@ -584,7 +658,7 @@ class FileExplorer:
             padx=15,
             pady=5,
             cursor="hand2",
-            command=create
+            command=create,
         ).pack(side=tk.LEFT, padx=5)
 
         tk.Button(
@@ -597,7 +671,7 @@ class FileExplorer:
             padx=15,
             pady=5,
             cursor="hand2",
-            command=dialog.destroy
+            command=dialog.destroy,
         ).pack(side=tk.LEFT, padx=5)
 
     def _new_file(self, parent_item):
@@ -620,7 +694,7 @@ class FileExplorer:
             text="Enter file name:",
             font=self.fonts["ui"],
             fg=self.colors["fg_light"],
-            bg=self.colors["bg_dark"]
+            bg=self.colors["bg_dark"],
         ).pack(pady=(15, 5))
 
         entry = tk.Entry(
@@ -631,7 +705,7 @@ class FileExplorer:
             insertbackground=self.colors["accent"],
             bd=0,
             highlightthickness=1,
-            highlightbackground=self.colors["sash_color"]
+            highlightbackground=self.colors["sash_color"],
         )
         entry.pack(fill=tk.X, padx=20, pady=5)
         entry.focus_set()
@@ -666,7 +740,7 @@ class FileExplorer:
             padx=15,
             pady=5,
             cursor="hand2",
-            command=create
+            command=create,
         ).pack(side=tk.LEFT, padx=5)
 
         tk.Button(
@@ -679,7 +753,7 @@ class FileExplorer:
             padx=15,
             pady=5,
             cursor="hand2",
-            command=dialog.destroy
+            command=dialog.destroy,
         ).pack(side=tk.LEFT, padx=5)
 
     def _new_folder(self, parent_item):
@@ -702,7 +776,7 @@ class FileExplorer:
             text="Enter folder name:",
             font=self.fonts["ui"],
             fg=self.colors["fg_light"],
-            bg=self.colors["bg_dark"]
+            bg=self.colors["bg_dark"],
         ).pack(pady=(15, 5))
 
         entry = tk.Entry(
@@ -713,7 +787,7 @@ class FileExplorer:
             insertbackground=self.colors["accent"],
             bd=0,
             highlightthickness=1,
-            highlightbackground=self.colors["sash_color"]
+            highlightbackground=self.colors["sash_color"],
         )
         entry.pack(fill=tk.X, padx=20, pady=5)
         entry.focus_set()
@@ -747,7 +821,7 @@ class FileExplorer:
             padx=15,
             pady=5,
             cursor="hand2",
-            command=create
+            command=create,
         ).pack(side=tk.LEFT, padx=5)
 
         tk.Button(
@@ -760,7 +834,7 @@ class FileExplorer:
             padx=15,
             pady=5,
             cursor="hand2",
-            command=dialog.destroy
+            command=dialog.destroy,
         ).pack(side=tk.LEFT, padx=5)
 
     def _rename_item(self, path, item_id):
@@ -779,7 +853,7 @@ class FileExplorer:
             text="Enter new name:",
             font=self.fonts["ui"],
             fg=self.colors["fg_light"],
-            bg=self.colors["bg_dark"]
+            bg=self.colors["bg_dark"],
         ).pack(pady=(15, 5))
 
         entry = tk.Entry(
@@ -790,7 +864,7 @@ class FileExplorer:
             insertbackground=self.colors["accent"],
             bd=0,
             highlightthickness=1,
-            highlightbackground=self.colors["sash_color"]
+            highlightbackground=self.colors["sash_color"],
         )
         entry.pack(fill=tk.X, padx=20, pady=5)
         entry.insert(0, old_name)
@@ -827,7 +901,7 @@ class FileExplorer:
             padx=15,
             pady=5,
             cursor="hand2",
-            command=rename
+            command=rename,
         ).pack(side=tk.LEFT, padx=5)
 
         tk.Button(
@@ -840,7 +914,7 @@ class FileExplorer:
             padx=15,
             pady=5,
             cursor="hand2",
-            command=dialog.destroy
+            command=dialog.destroy,
         ).pack(side=tk.LEFT, padx=5)
 
     def _delete_item(self, path, item_id):
@@ -851,7 +925,7 @@ class FileExplorer:
         confirm = messagebox.askyesno(
             "Confirm Delete",
             f"Are you sure you want to delete {'folder' if is_dir else 'file'} '{name}'?\n"
-            f"{'This action cannot be undone.' if is_dir else ''}"
+            f"{'This action cannot be undone.' if is_dir else ''}",
         )
 
         if confirm:
@@ -890,14 +964,16 @@ class FileExplorer:
         """Apply theme colors to the file explorer."""
         self.frame.configure(bg=self.colors["bg_dark"])
         self.header_frame.configure(bg=self.colors["bg_header"])
-        self.header_label.configure(bg=self.colors["bg_header"], fg=self.colors["fg_dim"])
+        self.header_label.configure(
+            bg=self.colors["bg_header"], fg=self.colors["fg_dim"]
+        )
 
         for button in (self.btn_refresh, self.btn_collapse):
             button.configure(
                 bg=self.colors["bg_header"],
                 fg=self.colors["fg_dim"],
                 activebackground=self.colors["sash_color"],
-                activeforeground=self.colors["accent"]
+                activeforeground=self.colors["accent"],
             )
 
         self.path_frame.configure(bg=self.colors["bg_editor"])
@@ -905,7 +981,7 @@ class FileExplorer:
             bg=self.colors["bg_editor"],
             fg=self.colors["fg_dim"],
             activebackground=self.colors["sash_color"],
-            activeforeground=self.colors["accent"]
+            activeforeground=self.colors["accent"],
         )
         self.path_label.configure(bg=self.colors["bg_editor"], fg=self.colors["fg_dim"])
         self.tree_frame.configure(bg=self.colors["bg_editor"])
