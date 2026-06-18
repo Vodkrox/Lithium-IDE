@@ -81,24 +81,16 @@ If you create a new theme, please submit a **pull request** to the **Awesome-Lit
 # Requirements 
 (Install with:  pip install -r requirements.txt)
 
-- Image processing for the splash screen and icons
 Pillow>=10.0.0
-
-- AI backend (local LLM support)
-
-- GGUF model inference via llama.cpp.
 llama-cpp-python>=0.2.0
-
-- Model downloading
 huggingface_hub>=0.20.0
-
-
 
 
 ## Run from source
 ```bash
 git clone https://github.com/Vodkrox/Lithium-IDE.git
 cd Lithium-IDE
+pip install -r requirements.txt
 python base.py
 ```
 # Notes
