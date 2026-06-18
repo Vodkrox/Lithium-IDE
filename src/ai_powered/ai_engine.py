@@ -5,6 +5,8 @@ import tempfile
 import urllib.request
 from urllib.parse import urlparse
 
+from src.ai_powered.ai_level import get_default_model
+
 
 def _get_appdata_dir():
     """Return the LithiumIDE appdata directory."""
@@ -23,18 +25,17 @@ def get_models_dir():
 
 _model_cache = {}
 
-MODEL_CANDIDATES = [
-    ("Qwen2.5-Coder-7B-GGUF", "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf"),
-]
+MODEL_CANDIDATES = [get_default_model()]
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a code-editing assistant inside Lithium IDE. "
+    "You are an expert code-editing assistant inside Lithium IDE. "
     "You respond in the same language the user uses (English, Spanish, etc.). "
     "When the user asks you to change the current file, you MUST output only executable skill XML tags, not explanations. "
+    "Prefer minimal, correct, production-ready changes over verbose rewrites. "
     "If the current file contains invalid syntax or unrelated text, fix it by deleting/replacing lines before adding new code. "
     "If needed, replace the entire file content using replace_file when the current content is not salvageable. "
     "Never answer with meta-instructions like 'XML tags must be well-formed' or 'Propose the changes'; emit the actual <skill> blocks instead. "
-    "Be concise."
+    "Be concise, precise, and complete."
 )
 
 
@@ -249,8 +250,13 @@ def download_model_url(url, progress_callback=None):
     return _download_model_url(url, progress_callback=progress_callback)
 
 
+def clear_model_cache():
+    """Unload cached llama-cpp / transformers models."""
+    _model_cache.clear()
+
+
 def list_model_candidates():
-    """Return a list of model candidates."""
+    """Return the built-in model candidate."""
     return [MODEL_CANDIDATES[0]] if MODEL_CANDIDATES else []
 
 
@@ -370,28 +376,42 @@ def _generate_with_llama_cpp_external(model_path, prompt, max_tokens=256):
             os.remove(prompt_path)
 
 
-def _generate_with_llama_cpp(model_path, prompt, max_tokens=256):
+def _generate_with_llama_cpp(
+    model_path,
+    prompt,
+    max_tokens=256,
+    n_ctx=8192,
+    n_batch=512,
+    n_threads=None,
+    temperature=0.5,
+    top_p=0.85,
+    repeat_penalty=1.1,
+):
     Llama = _safe_import_llama_cpp()
     if Llama is None:
         if _can_use_external_llama_cpp():
             return _generate_with_llama_cpp_external(model_path, prompt, max_tokens=max_tokens)
         raise RuntimeError("The llama-cpp backend is not installed.")
 
-    if model_path not in _model_cache:
-        _model_cache[model_path] = Llama(
-            model_path=model_path,
-            n_ctx=8192,
-            n_batch=512,
-            verbose=False
-        )
+    cache_key = (model_path, n_ctx, n_batch, n_threads)
+    if cache_key not in _model_cache:
+        llama_kwargs = {
+            "model_path": model_path,
+            "n_ctx": n_ctx,
+            "n_batch": n_batch,
+            "verbose": False,
+        }
+        if n_threads is not None:
+            llama_kwargs["n_threads"] = n_threads
+        _model_cache[cache_key] = Llama(**llama_kwargs)
 
-    llm = _model_cache[model_path]
+    llm = _model_cache[cache_key]
     response = llm(
         prompt=prompt,
         max_tokens=max_tokens,
-        temperature=0.5,
-        top_p=0.85,
-        repeat_penalty=1.1,
+        temperature=temperature,
+        top_p=top_p,
+        repeat_penalty=repeat_penalty,
         stop=["<|im_end|>", "<|im_start|>user", "<|im_start|>system"],
     )
 
@@ -454,7 +474,18 @@ def _format_chat_prompt(system_prompt, user_prompt):
     )
 
 
-def generate_text_from_model(model_source, system_prompt, user_prompt, max_tokens=512):
+def generate_text_from_model(
+    model_source,
+    system_prompt,
+    user_prompt,
+    max_tokens=512,
+    n_ctx=8192,
+    n_batch=512,
+    n_threads=None,
+    temperature=0.5,
+    top_p=0.85,
+    repeat_penalty=1.1,
+):
     resolved_source = resolve_model_source(model_source)
     if not resolved_source:
         raise RuntimeError("Could not resolve the AI model path.")
@@ -474,7 +505,17 @@ def generate_text_from_model(model_source, system_prompt, user_prompt, max_token
                 break
 
     if is_gguf:
-        return _generate_with_llama_cpp(gguf_path, prompt_text, max_tokens=max_tokens)
+        return _generate_with_llama_cpp(
+            gguf_path,
+            prompt_text,
+            max_tokens=max_tokens,
+            n_ctx=n_ctx,
+            n_batch=n_batch,
+            n_threads=n_threads,
+            temperature=temperature,
+            top_p=top_p,
+            repeat_penalty=repeat_penalty,
+        )
     else:
         transformers_impl = _safe_import_transformers()
         if transformers_impl is None:

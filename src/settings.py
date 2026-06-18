@@ -10,7 +10,16 @@ class SettingsManager:
         "theme": "Graphite",
         "language": "Python",
         "last_file": None,
-        "last_folder": None
+        "last_folder": None,
+        "ai_level_mode": "auto",
+        "ai_level": "Medium",
+        "ai_skill_file_scope": "open_file",
+        "ai_skill_web_search": False,
+        "ai_skill_reasoning": False,
+        "ai_skill_explain_actions": False,
+        "ai_skill_auto_approve": False,
+        "ai_skill_run_commands": False,
+        "ai_skill_notify_on_complete": False,
     }
 
     def __init__(self):

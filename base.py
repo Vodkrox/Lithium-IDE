@@ -13,7 +13,9 @@ from src.editor import LithiumEditorController
 from src.autocomplete import LithiumAutocompleteManager
 from src.settings import SettingsManager
 from src.ai_powered import ai_engine as ai_runner
+from src.ai_powered import ai_level as ai_level_manager
 from src.ai_powered.ai_skills import get_executor as get_ai_skills_executor, reset_executor as reset_ai_skills_executor, AISkillResult
+from src.ai_powered.ai_skill_settings import AISkillSettings, FILE_SCOPE_OPTIONS, SKILL_TOGGLE_LABELS
 from src.ai_powered.conversation_manager import get_conversation_manager, Conversation
 from src.file_explorer import FileExplorer
 from src.splash import SplashScreen
@@ -83,19 +85,15 @@ class LithiumIDE:
         )
         self.status_label.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
 
-        self.conv_dropdown_btn = tk.Button(
+        self.ai_level_status_label = tk.Label(
             self.status_bar,
-            text="💬 No conversation",
+            text="AI Level: Medium",
+            anchor="e",
             font=("Segoe UI", 9),
             fg=theme.COLORS["fg_light"],
-            bg=theme.COLORS["bg_header"],
-            bd=0,
-            activebackground=theme.COLORS["sash_color"],
-            activeforeground=theme.COLORS["fg_light"],
-            cursor="hand2",
-            command=self.show_conversations_dropdown
+            bg=theme.COLORS["bg_header"]
         )
-        self.conv_dropdown_btn.pack(side=tk.RIGHT, padx=10)
+        self.ai_level_status_label.pack(side=tk.RIGHT, padx=(0, 10))
 
         self.main_paned = tk.PanedWindow(root, orient=tk.HORIZONTAL)
         self.main_paned.pack(fill=tk.BOTH, expand=1)
@@ -218,6 +216,19 @@ class LithiumIDE:
         self.btn_ai.pack(side=tk.LEFT, padx=2, pady=3)
         theme.style_toolbar_button(self.btn_ai)
 
+        self.system_ram_gb = ai_level_manager.get_system_ram_gb()
+        self.ai_level_mode = self.settings_manager.get("ai_level_mode", "auto")
+        self.ai_manual_level = self.settings_manager.get("ai_level", "Medium")
+        self.effective_ai_level = ai_level_manager.get_effective_level(
+            self.ai_level_mode,
+            self.ai_manual_level,
+            self.system_ram_gb,
+        )
+        self.ai_inference_params = ai_level_manager.get_inference_params(self.effective_ai_level)
+
+        self.ai_skill_settings = AISkillSettings(self.settings_manager).load()
+        self._init_ai_skill_vars()
+
         self.ai_model_link = self._resolve_ai_model_link()
         self.ai_system_prompt = ai_runner.DEFAULT_SYSTEM_PROMPT
 
@@ -226,6 +237,8 @@ class LithiumIDE:
 
         if self.ai_model_link:
             self.status_label.config(text=f"AI: configured model {self.ai_model_link}")
+
+        self._update_ai_level_display()
 
         try:
             stop_icon = tk.PhotoImage(width=12, height=12)
@@ -320,6 +333,18 @@ class LithiumIDE:
         )
         self.chat_header_label.pack(side=tk.LEFT, padx=12, pady=8)
 
+        self.ai_level_var = tk.StringVar(value=self._ai_level_dropdown_value())
+        self.ai_level_dropdown = ttk.Combobox(
+            self.chat_header,
+            textvariable=self.ai_level_var,
+            values=self._ai_level_dropdown_options(),
+            state="readonly",
+            width=18,
+            font=theme.FONTS["ui"],
+        )
+        self.ai_level_dropdown.pack(side=tk.LEFT, padx=(0, 8), pady=6)
+        self.ai_level_dropdown.bind("<<ComboboxSelected>>", self.on_ai_level_selected)
+
         self.chat_close_btn = tk.Button(
             self.chat_header,
             text="✕",
@@ -332,6 +357,20 @@ class LithiumIDE:
             command=self.toggle_ai_chat
         )
         self.chat_close_btn.pack(side=tk.RIGHT, padx=10)
+
+        self.conv_dropdown_btn = tk.Button(
+            self.chat_header,
+            text="💬 No conversation ▾",
+            font=("Segoe UI", 9),
+            fg=theme.COLORS["fg_light"],
+            bg=theme.COLORS["bg_header"],
+            bd=0,
+            activebackground=theme.COLORS["sash_color"],
+            activeforeground=theme.COLORS["fg_light"],
+            cursor="hand2",
+            command=self.show_conversations_dropdown
+        )
+        self.conv_dropdown_btn.pack(side=tk.RIGHT, padx=(0, 4), pady=6)
 
         self.chat_scrollbar = ttk.Scrollbar(self.chat_panel)
         self.chat_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -370,6 +409,35 @@ class LithiumIDE:
             highlightcolor=theme.COLORS["accent"]
         )
         self.chat_input.pack(fill=tk.X, side=tk.TOP, pady=(0, 5))
+
+        self.chat_status_bar = tk.Frame(self.chat_input_container, bg=theme.COLORS["bg_dark"])
+        self.chat_status_bar.pack(fill=tk.X, side=tk.TOP, pady=(0, 4))
+
+        self.skills_dropdown_btn = tk.Button(
+            self.chat_status_bar,
+            text="Skills ▾",
+            font=("Segoe UI", 9),
+            fg=theme.COLORS["fg_light"],
+            bg=theme.COLORS["bg_dark"],
+            bd=0,
+            activebackground=theme.COLORS["sash_color"],
+            activeforeground=theme.COLORS["fg_light"],
+            cursor="hand2",
+            command=self.show_skills_dropdown,
+        )
+        self.skills_dropdown_btn.pack(side=tk.LEFT)
+        theme.style_toolbar_button(self.skills_dropdown_btn)
+
+        self.chat_task_status_label = tk.Label(
+            self.chat_status_bar,
+            text="",
+            font=("Segoe UI", 8),
+            fg=theme.COLORS["fg_dim"],
+            bg=theme.COLORS["bg_dark"],
+        )
+        self.chat_task_status_label.pack(side=tk.RIGHT)
+
+        self._update_skills_dropdown_label()
 
         self.chat_button_frame = tk.Frame(self.chat_input_container, bg=theme.COLORS["bg_dark"])
         self.chat_button_frame.pack(fill=tk.X, side=tk.TOP)
@@ -755,7 +823,8 @@ class LithiumIDE:
             result = ai_runner.generate_text_from_model(
                 self.ai_model_link,
                 self.ai_system_prompt,
-                editor_prompt
+                editor_prompt,
+                **self.ai_inference_params,
             )
             result = self._retry_if_broken_ai_edit_response(prompt, editor_prompt, result)
 
@@ -778,8 +847,20 @@ class LithiumIDE:
 
     def check_ai_status(self):
         runtime = ai_runner.get_runtime_status()
+        level = self.effective_ai_level
+        billions = ai_level_manager.format_billions_label(level)
+        mode = "Auto" if (self.ai_level_mode or "auto").lower() == "auto" else "Manual"
+        ram_info = f"{self.system_ram_gb:.1f} GB" if self.system_ram_gb else "Unknown"
         if runtime:
-            messagebox.showinfo("AI Status", f"AI backend available: {runtime}\nModel: {self.ai_model_link or 'Not configured'}")
+            messagebox.showinfo(
+                "AI Status",
+                (
+                    f"AI backend available: {runtime}\n"
+                    f"AI Level: {level} ({billions} de 7B)\n"
+                    f"Modo: {mode} | RAM: {ram_info}\n"
+                    f"Model: {self.ai_model_link or 'Not configured'}"
+                ),
+            )
             self.status_label.config(text=f"AI: backend {runtime} available")
         else:
             messagebox.showwarning(
@@ -900,12 +981,28 @@ Example prompts:
             bg=theme.COLORS["bg_header"],
             fg=theme.COLORS["fg_dim"]
         )
+        self.ai_level_status_label.config(
+            bg=theme.COLORS["bg_header"],
+            fg=theme.COLORS["fg_light"]
+        )
 
     def _apply_chat_theme(self):
         self.chat_frame.config(bg=theme.COLORS["bg_dark"])
         self.chat_panel.config(bg=theme.COLORS["bg_dark"])
         self.chat_header.config(bg=theme.COLORS["bg_header"])
         self.chat_header_label.config(fg=theme.COLORS["fg_dim"], bg=theme.COLORS["bg_header"])
+        if hasattr(self, "ai_level_dropdown"):
+            self.ai_level_dropdown.configure(
+                foreground=theme.COLORS["fg_light"],
+                background=theme.COLORS["bg_header"],
+            )
+        if hasattr(self, "conv_dropdown_btn"):
+            self.conv_dropdown_btn.config(
+                fg=theme.COLORS["fg_light"],
+                bg=theme.COLORS["bg_header"],
+                activebackground=theme.COLORS["sash_color"],
+                activeforeground=theme.COLORS["fg_light"],
+            )
         self.chat_close_btn.config(
             fg=theme.COLORS["fg_dim"],
             bg=theme.COLORS["bg_header"],
@@ -920,6 +1017,18 @@ Example prompts:
             selectforeground=theme.COLORS["fg_light"]
         )
         self.chat_input_container.config(bg=theme.COLORS["bg_dark"])
+        if hasattr(self, "chat_status_bar"):
+            self.chat_status_bar.config(bg=theme.COLORS["bg_dark"])
+            self.skills_dropdown_btn.config(
+                fg=theme.COLORS["fg_light"],
+                bg=theme.COLORS["bg_dark"],
+                activebackground=theme.COLORS["sash_color"],
+                activeforeground=theme.COLORS["fg_light"],
+            )
+            self.chat_task_status_label.config(
+                fg=theme.COLORS["fg_dim"],
+                bg=theme.COLORS["bg_dark"],
+            )
         self.chat_input.config(
             bg=theme.COLORS["bg_editor"],
             fg=theme.COLORS["fg_light"],
@@ -1095,6 +1204,140 @@ Example prompts:
 
         def focus_listbox(event):
             listbox.focus_set()
+
+    def _ai_level_dropdown_options(self):
+        return ["Auto"] + ai_level_manager.AI_LEVELS
+
+    def _ai_level_dropdown_value(self):
+        if (self.ai_level_mode or "auto").lower() == "auto":
+            return "Auto"
+        return ai_level_manager.normalize_level(self.ai_manual_level)
+
+    def _get_effective_ai_level(self):
+        return ai_level_manager.get_effective_level(
+            self.ai_level_mode,
+            self.ai_manual_level,
+            self.system_ram_gb,
+        )
+
+    def _apply_ai_level(self):
+        previous_params = getattr(self, "ai_inference_params", None)
+        self.effective_ai_level = self._get_effective_ai_level()
+        self.ai_inference_params = ai_level_manager.get_inference_params(self.effective_ai_level)
+
+        if previous_params != self.ai_inference_params:
+            ai_runner.clear_model_cache()
+
+        self._update_ai_level_display()
+
+    def _update_ai_level_display(self):
+        level = self.effective_ai_level
+        self.ai_level_status_label.config(text=f"AI Level: {level}")
+
+        if hasattr(self, "ai_level_var"):
+            self.ai_level_var.set(self._ai_level_dropdown_value())
+
+    def on_ai_level_selected(self, event=None):
+        selected = self.ai_level_var.get().strip()
+        if selected == "Auto":
+            self.ai_level_mode = "auto"
+            self.settings_manager.set("ai_level_mode", "auto")
+        else:
+            self.ai_level_mode = "manual"
+            self.ai_manual_level = ai_level_manager.normalize_level(selected)
+            self.settings_manager.set("ai_level_mode", "manual")
+            self.settings_manager.set("ai_level", self.ai_manual_level)
+
+        self._apply_ai_level()
+
+    def _init_ai_skill_vars(self):
+        self._ai_skill_file_scope_var = tk.StringVar(value=self.ai_skill_settings.get("file_scope"))
+        self._ai_skill_toggle_vars = {}
+        for key, _label in SKILL_TOGGLE_LABELS:
+            self._ai_skill_toggle_vars[key] = tk.BooleanVar(value=self.ai_skill_settings.get(key))
+
+    def _refresh_ai_system_prompt(self):
+        self.ai_system_prompt = ai_runner.DEFAULT_SYSTEM_PROMPT
+        if not self.ai_skills_executor:
+            return
+
+        scope = self.ai_skill_settings.get("file_scope")
+        self.ai_skills_executor.configure_capabilities(
+            file_scope=scope,
+            allow_run_commands=self.ai_skill_settings.get("run_commands"),
+        )
+        self.ai_system_prompt += "\n" + self.ai_skills_executor.generate_skill_prompt(file_scope=scope)
+        addendum = self.ai_skill_settings.build_system_prompt_addendum()
+        if addendum:
+            self.ai_system_prompt += "\n" + addendum
+
+    def _set_ai_skill(self, key, value):
+        self.ai_skill_settings.set(key, value)
+        self._refresh_ai_system_prompt()
+        self._update_skills_dropdown_label()
+
+    def _update_skills_dropdown_label(self):
+        if not hasattr(self, "skills_dropdown_btn"):
+            return
+        count = self.ai_skill_settings.active_count()
+        label = f"Skills ({count}) ▾" if count else "Skills ▾"
+        self.skills_dropdown_btn.config(text=label)
+
+    def show_skills_dropdown(self):
+        menu = tk.Menu(self.root, tearoff=0, bg=theme.COLORS["bg_header"], fg=theme.COLORS["fg_light"])
+        theme.style_menu(menu)
+
+        for scope_value, scope_label in FILE_SCOPE_OPTIONS:
+            menu.add_radiobutton(
+                label=scope_label,
+                variable=self._ai_skill_file_scope_var,
+                value=scope_value,
+                command=lambda value=scope_value: self._set_ai_skill("file_scope", value),
+            )
+
+        menu.add_separator()
+
+        for key, label in SKILL_TOGGLE_LABELS:
+            menu.add_checkbutton(
+                label=label,
+                variable=self._ai_skill_toggle_vars[key],
+                command=lambda skill_key=key: self._set_ai_skill(
+                    skill_key,
+                    self._ai_skill_toggle_vars[skill_key].get(),
+                ),
+            )
+
+        x = self.skills_dropdown_btn.winfo_rootx()
+        y = self.skills_dropdown_btn.winfo_rooty() + self.skills_dropdown_btn.winfo_height()
+        menu.post(x, y)
+
+    def _collect_workspace_files(self, max_files=150):
+        folder = None
+        if hasattr(self, "file_explorer") and self.file_explorer:
+            folder = self.file_explorer.current_folder
+        if not folder or not os.path.isdir(folder):
+            return []
+
+        skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv", ".models"}
+        collected = []
+        for root, dirs, files in os.walk(folder):
+            dirs[:] = [name for name in dirs if not name.startswith(".") and name not in skip_dirs]
+            for filename in files:
+                if filename.startswith("."):
+                    continue
+                rel_path = os.path.relpath(os.path.join(root, filename), folder)
+                collected.append(rel_path.replace("\\", "/"))
+                if len(collected) >= max_files:
+                    return collected
+        return collected
+
+    def _notify_ai_task_complete(self):
+        if not self.ai_skill_settings.get("notify_on_complete"):
+            return
+        self.root.bell()
+        if hasattr(self, "chat_task_status_label"):
+            self.chat_task_status_label.config(text="Task complete")
+            self.root.after(4000, lambda: self.chat_task_status_label.config(text=""))
 
     def _resolve_ai_model_link(self):
         saved_model = self.settings_manager.get("ai_model_path")
@@ -1381,7 +1624,7 @@ Example prompts:
                 project_folder_getter=get_project_folder,
                 status_callback=status_update
             )
-            self.ai_system_prompt = self.ai_system_prompt + "\n" + self.ai_skills_executor.generate_skill_prompt()
+            self._refresh_ai_system_prompt()
         except Exception as e:
             print(f"Warning: Could not initialize AI Skills: {e}")
             self.ai_skills_executor = None
@@ -1442,6 +1685,40 @@ Example prompts:
         else:
             numbered_content = "(empty file)"
 
+        workspace_section = ""
+        if self.ai_skill_settings.is_workspace_scope():
+            project_files = self._collect_workspace_files()
+            if project_files:
+                file_list = "\n".join(f"- {path}" for path in project_files)
+                workspace_section = f"""
+Project scope: you may modify files anywhere under the opened folder tree.
+Project files (relative paths):
+{file_list}
+"""
+            else:
+                workspace_section = """
+Project scope: you may modify files anywhere under the opened folder tree.
+"""
+
+        if self.ai_skill_settings.get("explain_actions"):
+            edit_output_rule = (
+                "- If the user request requires editing, use one or more <skill ...> XML blocks.\n"
+                "- You may include a brief explanation of what you are doing."
+            )
+        else:
+            edit_output_rule = (
+                "- If the user request requires editing the file, respond ONLY with one or more <skill ...> XML blocks.\n"
+                "- Do NOT explain what XML tags are.\n"
+                "- Do NOT say \"propose the changes\".\n"
+                "- Do NOT describe the changes in prose instead of using skills."
+            )
+
+        scope_rule = (
+            "- All modifications must target only the currently open file and must be expressed with skill XML tags so the user can approve them."
+            if not self.ai_skill_settings.is_workspace_scope()
+            else "- Modifications may target the open file or other files under the opened project folder using the appropriate skill XML tags."
+        )
+
         return f"""TASK
 User request:
 {user_message}
@@ -1453,16 +1730,13 @@ Current open file content with line numbers:
 ```text
 {numbered_content}
 ```
-
+{workspace_section}
 OUTPUT CONTRACT
-- If the user request requires editing the file, respond ONLY with one or more <skill ...> XML blocks.
-- Do NOT explain what XML tags are.
-- Do NOT say "propose the changes".
-- Do NOT describe the changes in prose instead of using skills.
+{edit_output_rule}
 - If the current content would make the final file invalid, first emit delete_lines for the invalid/unrelated lines, then emit add_lines with the corrected code.
 - If the whole file is invalid or contains unrelated text, use replace_file to replace the entire file content.
 - Do not just append code if existing text/code would prevent compilation.
-- All modifications must target only the currently open file and must be expressed with skill XML tags so the user can approve them.
+{scope_rule}
 
 For example, if line 1 is invalid plain text and the user asks for Python hello world, respond exactly like this:
 <skill name="delete_lines"><parameter name="line">1</parameter><parameter name="count">1</parameter></skill>
@@ -1508,7 +1782,7 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
                 self.ai_model_link,
                 self.ai_system_prompt + "\nYour next answer must be only valid <skill> XML blocks for Lithium.",
                 repair_prompt,
-                max_tokens=512
+                **self.ai_inference_params,
             )
             if repaired and not self._looks_like_broken_ai_edit_response(repaired):
                 return repaired
@@ -1524,10 +1798,16 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
 
         try:
             editor_prompt = self._build_ai_editor_prompt(prompt)
+            inference_params = dict(self.ai_inference_params)
+            if self.ai_skill_settings.get("reasoning"):
+                base_tokens = inference_params.get("max_tokens", 352)
+                inference_params["max_tokens"] = int(base_tokens * 1.35)
+
             response = ai_runner.generate_text_from_model(
                 self.ai_model_link,
                 self.ai_system_prompt,
-                editor_prompt
+                editor_prompt,
+                **inference_params,
             )
             response = self._retry_if_broken_ai_edit_response(prompt, editor_prompt, response)
 
@@ -1547,6 +1827,12 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
                 except Exception as skill_err:
                     print(f"Warning: Error processing AI skills: {skill_err}")
 
+            if pending_approvals and self.ai_skill_settings.get("auto_approve") and self.ai_skills_executor:
+                for result_idx, skill_name, result in pending_approvals:
+                    apply_result = self.ai_skills_executor.apply_skill(skill_name, result)
+                    skill_results[result_idx] = (skill_name, apply_result)
+                pending_approvals = []
+
             def show_response():
                 if self.conversation_manager.current_conversation and clean_response.strip():
                     self.conversation_manager.current_conversation.add_message("assistant", clean_response)
@@ -1563,6 +1849,7 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
                         self.append_to_chat_history("AI", clean_response)
 
                     self.status_label.config(text="AI: Ready")
+                    self._notify_ai_task_complete()
 
                     self.refresh_conversations_list()
 
@@ -1574,83 +1861,86 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
             self.root.after(0, lambda: self.status_label.config(text="AI: Error"))
 
     def _show_loading_indicator(self):
-        """Show simple loading indicator with fading dot in chat."""
+        """Show a minimal monochrome loader while the AI generates a response."""
         self.chat_history.config(state=tk.NORMAL)
 
-        self._loading_frame = tk.Frame(self.chat_history, bg=theme.COLORS.get("bg_dark", "#181825"))
+        bg = theme.COLORS.get("bg_editor", "#080808")
+        fg_dim = theme.COLORS.get("fg_dim", "#7D8794")
 
-        tk.Label(
-            self._loading_frame,
-            text="AI is thinking",
-            font=("Segoe UI", 9, "italic"),
-            fg=theme.COLORS.get("fg_dim", "#a6adc8"),
-            bg=theme.COLORS.get("bg_dark", "#181825")
-        ).pack(side=tk.LEFT)
+        self._loading_frame = tk.Frame(self.chat_history, bg=bg)
+        row = tk.Frame(self._loading_frame, bg=bg, padx=8, pady=6)
+        row.pack(anchor=tk.W, padx=6, pady=4)
+
+        self._loader_status_label = tk.Label(
+            row,
+            text="Thinking",
+            font=("Segoe UI", 9),
+            fg=fg_dim,
+            bg=bg,
+        )
+        self._loader_status_label.pack(side=tk.LEFT)
 
         self._loader_canvas = tk.Canvas(
-            self._loading_frame,
-            width=12,
-            height=12,
-            bg=theme.COLORS.get("bg_dark", "#181825"),
-            highlightthickness=0
+            row,
+            width=28,
+            height=14,
+            bg=bg,
+            highlightthickness=0,
+            bd=0,
         )
-        self._loader_canvas.pack(side=tk.LEFT, padx=(2, 5))
+        self._loader_canvas.pack(side=tk.LEFT, padx=(4, 0))
 
         self.chat_history.window_create(tk.END, window=self._loading_frame)
         self.chat_history.insert(tk.END, "\n")
         self.chat_history.see(tk.END)
         self.chat_history.config(state=tk.DISABLED)
 
-        self._fade_alpha = 0
-        self._fade_increasing = True
+        self._loader_tick = 0
+        self._loader_animating = True
+        self._loader_after_id = None
         self._animate_loader()
 
     def _animate_loader(self):
-        """Animate a single dot with fade in/out effect."""
-        if not hasattr(self, '_loader_canvas'):
+        if not getattr(self, "_loader_animating", False):
             return
+        if not hasattr(self, "_loader_canvas"):
+            return
+
+        fg_dim = theme.COLORS.get("fg_dim", "#7D8794")
+        fg = theme.COLORS.get("fg_light", "#FFFFFF")
+        active = (self._loader_tick // 6) % 3
 
         canvas = self._loader_canvas
         canvas.delete("all")
+        for index in range(3):
+            x = 6 + index * 9
+            color = fg if index == active else fg_dim
+            canvas.create_oval(x - 2, 5, x + 2, 9, fill=color, outline="")
 
-        accent_color = theme.COLORS.get("accent", "#cba6f7")
-        r = int(accent_color[1:3], 16)
-        g = int(accent_color[3:5], 16)
-        b = int(accent_color[5:7], 16)
-
-        opacity = self._fade_alpha / 100.0
-        color = f"#{int(r * opacity):02x}{int(g * opacity):02x}{int(b * opacity):02x}"
-
-        dot_size = 3
-        canvas.create_oval(
-            6 - dot_size, 6 - dot_size,
-            6 + dot_size, 6 + dot_size,
-            fill=color, outline=""
-        )
-
-        if self._fade_increasing:
-            self._fade_alpha += 5
-            if self._fade_alpha >= 100:
-                self._fade_increasing = False
-        else:
-            self._fade_alpha -= 5
-            if self._fade_alpha <= 0:
-                self._fade_increasing = True
-
-        if hasattr(self, '_loader_canvas'):
-            self.root.after(50, self._animate_loader)
+        self._loader_tick += 1
+        self._loader_after_id = self.root.after(120, self._animate_loader)
 
     def _remove_loading_indicator(self):
         """Remove the loading indicator from chat."""
-        if hasattr(self, '_loading_frame'):
+        self._loader_animating = False
+
+        if getattr(self, "_loader_after_id", None):
+            try:
+                self.root.after_cancel(self._loader_after_id)
+            except Exception:
+                pass
+            self._loader_after_id = None
+
+        if hasattr(self, "_loading_frame"):
             try:
                 self._loading_frame.destroy()
             except Exception:
                 pass
             del self._loading_frame
 
-        if hasattr(self, '_loader_canvas'):
-            del self._loader_canvas
+        for attr in ("_loader_canvas", "_loader_status_label"):
+            if hasattr(self, attr):
+                delattr(self, attr)
 
     def _show_approval_dialog(self, index, pending_approvals, all_results, clean_response):
         """Show approval dialog inline in the chat for pending skill changes."""
@@ -1670,6 +1960,7 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
             self.chat_history.see(tk.END)
             self.chat_history.config(state=tk.DISABLED)
             self.status_label.config(text="AI: Ready")
+            self._notify_ai_task_complete()
             return
 
         result_idx, skill_name, result = pending_approvals[index]
@@ -2030,7 +2321,7 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
         review_win.wait_window(review_win)
 
     def show_conversations_dropdown(self):
-        """Show conversations dropdown menu from status bar."""
+        """Show conversations dropdown menu from the AI chat header."""
         conversations = self.conversation_manager.list_conversations()
         self._conversation_ids = [conv["id"] for conv in conversations]
 
@@ -2059,16 +2350,16 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
             menu.add_command(label="No saved conversations", state=tk.DISABLED)
 
         x = self.conv_dropdown_btn.winfo_rootx()
-        y = self.conv_dropdown_btn.winfo_rooty() - 200
+        y = self.conv_dropdown_btn.winfo_rooty() + self.conv_dropdown_btn.winfo_height()
         menu.post(x, y)
 
     def refresh_conversations_list(self):
         """Refresh the conversation dropdown button label."""
         if self.conversation_manager.current_conversation:
             title = self.conversation_manager.current_conversation.title[:20]
-            self.conv_dropdown_btn.config(text=f"💬 {title}")
+            self.conv_dropdown_btn.config(text=f"💬 {title} ▾")
         else:
-            self.conv_dropdown_btn.config(text="💬 No conversation")
+            self.conv_dropdown_btn.config(text="💬 No conversation ▾")
 
     def new_conversation(self):
         """Create a new conversation."""
