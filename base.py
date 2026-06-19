@@ -1939,6 +1939,7 @@ Example prompts:
         self.chat_send_btn.config(
             text=" Stop",
             image=self.icons.get("stop", ""),
+            compound=tk.LEFT,
             command=self._stop_ai_generation,
         )
 
@@ -1958,6 +1959,7 @@ Example prompts:
         self._remove_loading_indicator()
         self._cleanup_stream_ui()
         self.status_label.config(text="AI: Stopped")
+        self.append_to_chat_history("System", "Response stopped by user")
 
     def _build_ai_editor_prompt(self, user_message):
         """Build an AI prompt that includes the current file content with line numbers.
