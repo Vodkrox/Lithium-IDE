@@ -90,7 +90,6 @@ FONTS = {
     "ui": (_FONT_UI, 10),
     "header": (_FONT_UI, 9, "bold"),
     "editor": (_FONT_MONO, 12),
-    "console": (_FONT_MONO, 11),
 }
 
 
@@ -105,10 +104,8 @@ def set_theme(theme_name):
 def apply_theme(
     root,
     editor,
-    console,
     paned_window,
     editor_label,
-    console_label,
     line_numbers,
     status_bar,
     toolbar=None,
@@ -148,15 +145,6 @@ def apply_theme(
         bd=0,
         anchor="w",
     )
-    console_label.config(
-        bg=COLORS["bg_header"],
-        fg=COLORS["fg_dim"],
-        font=FONTS["header"],
-        padx=12,
-        pady=8,
-        bd=0,
-        anchor="w",
-    )
 
     editor.config(
         bg=COLORS["bg_editor"],
@@ -180,19 +168,6 @@ def apply_theme(
         bd=0,
         width=4,
         state=tk.DISABLED,
-        highlightthickness=0,
-    )
-
-    console.config(
-        bg=COLORS["console_bg"],
-        fg=COLORS["console_fg"],
-        insertbackground=COLORS["accent"],
-        selectbackground=COLORS["selection_bg"],
-        selectforeground=COLORS["fg_light"],
-        font=FONTS["console"],
-        padx=12,
-        pady=12,
-        bd=0,
         highlightthickness=0,
     )
 

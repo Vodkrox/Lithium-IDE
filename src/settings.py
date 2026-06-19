@@ -15,7 +15,6 @@ class SettingsManager:
         "ai_skill_web_search": False,
         "ai_skill_reasoning": False,
         "ai_skill_explain_actions": False,
-        "ai_skill_run_commands": False,
         "ai_skill_notify_on_complete": False,
     }
 

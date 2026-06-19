@@ -85,7 +85,6 @@ class AISkillsExecutor:
         self.project_folder_getter = project_folder_getter
         self.status_callback = status_callback
         self.file_scope = "open_file"
-        self.allow_run_commands = False
 
         self._skills = {
             "add_lines": self._skill_add_lines,
@@ -1194,11 +1193,10 @@ class AISkillsExecutor:
         }
         return descriptions.get(skill_name, "No description available")
 
-    def configure_capabilities(self, file_scope="open_file", allow_run_commands=False):
+    def configure_capabilities(self, file_scope="open_file"):
         self.file_scope = (
             file_scope if file_scope in ("open_file", "workspace") else "open_file"
         )
-        self.allow_run_commands = bool(allow_run_commands)
 
     def generate_skill_prompt(self, file_scope="open_file") -> str:
         """

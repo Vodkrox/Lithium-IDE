@@ -186,12 +186,6 @@ class TestBuildPromptAddendum:
         prompt = settings.build_system_prompt_addendum()
         assert "Web search" in prompt
 
-    def test_run_commands_in_prompt(self, skill_settings):
-        settings, _ = skill_settings
-        settings.set("run_commands", True)
-        prompt = settings.build_system_prompt_addendum()
-        assert "Shell command" in prompt
-
     def test_prompt_is_string(self, skill_settings):
         settings, _ = skill_settings
         result = settings.build_system_prompt_addendum()
