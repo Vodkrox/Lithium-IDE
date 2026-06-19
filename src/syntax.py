@@ -640,9 +640,7 @@ class SyntaxHighlighter:
                 content = self.editor.get("1.0", "end-1c")
                 if content:
                     self._initial_highlight_done = True
-                    # Use visible-range highlighting instead of full-document
-                    # to avoid X11 PolySegment request overflow on large files
-                    self.highlight_visible()
+                    self.highlight_all()
                 else:
                     self.schedule_highlight()
             else:
@@ -656,7 +654,7 @@ class SyntaxHighlighter:
                 self.editor.after_cancel(self._schedule_id)
             except Exception:
                 pass
-        self._schedule_id = self.editor.after(delay_ms, self.highlight_visible)
+        self._schedule_id = self.editor.after(delay_ms, self.highlight_all)
 
     def highlight_visible(self):
         """
@@ -842,10 +840,10 @@ class SyntaxHighlighter:
 
     def set_language(self, language: str):
         """
-        Notify that the language changed. Triggers a re-highlight.
-        Uses visible-range highlighting to avoid X11 PolySegment overflow.
+        Notify that the language changed. Triggers a full re-highlight.
+        Falls back to visible-only for large documents (>500 lines).
         """
-        self.highlight_visible()
+        self.highlight_all()
 
     def destroy(self):
         """Clean up bindings."""
