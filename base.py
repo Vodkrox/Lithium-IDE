@@ -355,6 +355,8 @@ class LithiumIDE:
         self.btn_run.pack(side=tk.LEFT, padx=(20, 2), pady=3)
         theme.style_toolbar_button(self.btn_run)
         self.script_running = False
+        self._ai_generating = False
+        self._ai_stop_event = threading.Event()
 
         self.active_menu = None
 
@@ -1931,6 +1933,32 @@ Example prompts:
 
         threading.Thread(target=self.run_chat_ai, args=(message,), daemon=True).start()
 
+        # Toggle button to Stop mode while AI generates
+        self._ai_stop_event.clear()
+        self._ai_generating = True
+        self.chat_send_btn.config(
+            text=" Stop",
+            image=self.icons.get("stop", ""),
+            command=self._stop_ai_generation,
+        )
+
+    def _restore_send_button(self):
+        """Restore the chat send button to its default state."""
+        self._ai_generating = False
+        self.chat_send_btn.config(
+            text="Send",
+            image="",
+            command=self.send_chat_message,
+        )
+
+    def _stop_ai_generation(self):
+        """Stop the current AI generation and restore the send button."""
+        self._ai_stop_event.set()
+        self._restore_send_button()
+        self._remove_loading_indicator()
+        self._cleanup_stream_ui()
+        self.status_label.config(text="AI: Stopped")
+
     def _build_ai_editor_prompt(self, user_message):
         """Build an AI prompt that includes the current file content with line numbers.
 
@@ -2347,6 +2375,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                     self._remove_loading_indicator()
                     self._cleanup_stream_ui()
                     self.status_label.config(text="AI: Error")
+                    self._restore_send_button()
                     self.append_to_chat_history(
                         "Error", f"Could not generate response: {state['error']}"
                     )
@@ -2378,6 +2407,11 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                     **inference_params,
                 )
                 for token in gen:
+                    # Check if user requested stop
+                    if self._ai_stop_event.is_set():
+                        with state_lock:
+                            state["done"] = True
+                        return
                     with state_lock:
                         state["full_buffer"] += token
                         self._update_stream_state_from_buffer(state)
@@ -2510,6 +2544,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                 self._original_content_before_ai = None
 
         self.status_label.config(text="AI: Ready")
+        self._restore_send_button()
         self._notify_ai_task_complete()
         self.refresh_conversations_list()
 
@@ -2590,6 +2625,13 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                     f"Model returned empty response after {max_attempts} attempts"
                 )
 
+            # Check if user requested stop during generation
+            if self._ai_stop_event.is_set():
+                self.root.after(0, self._remove_loading_indicator)
+                self.root.after(0, self._restore_send_button)
+                self.root.after(0, lambda: self.status_label.config(text="AI: Stopped"))
+                return
+
             response = self._retry_if_broken_ai_edit_response(
                 prompt, editor_prompt, response
             )
@@ -2669,6 +2711,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                         self._original_content_before_ai = None
 
                 self.status_label.config(text="AI: Ready")
+                self._restore_send_button()
                 self._notify_ai_task_complete()
                 self.refresh_conversations_list()
 
@@ -2677,6 +2720,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             # Schedule removal on main thread (we're in a worker thread)
             self.root.after(0, self._remove_loading_indicator)
             err_msg = str(exc)
+            self.root.after(0, self._restore_send_button)
             self.root.after(
                 0,
                 lambda: self.append_to_chat_history(
@@ -2797,6 +2841,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             self.chat_history.see(tk.END)
             self.chat_history.config(state=tk.DISABLED)
             self.status_label.config(text="AI: Ready")
+            self._restore_send_button()
             self._notify_ai_task_complete()
             return
 

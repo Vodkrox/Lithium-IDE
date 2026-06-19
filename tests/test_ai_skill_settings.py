@@ -47,7 +47,6 @@ class TestConstants:
         labels = dict(SKILL_TOGGLE_LABELS)
         assert "web_search" in labels
         assert "reasoning" in labels
-        assert "auto_approve" in labels
 
     def test_settings_keys_match_defaults(self):
         for key in DEFAULTS:
@@ -65,7 +64,6 @@ class TestLoad:
         settings.load()
         assert settings.get("file_scope") == "open_file"
         assert settings.get("web_search") is False
-        assert settings.get("auto_approve") is False
 
     def test_load_reads_stored_values(self, skill_settings):
         settings, mock = skill_settings
@@ -193,12 +191,6 @@ class TestBuildPromptAddendum:
         settings.set("run_commands", True)
         prompt = settings.build_system_prompt_addendum()
         assert "Shell command" in prompt
-
-    def test_auto_approve_in_prompt(self, skill_settings):
-        settings, _ = skill_settings
-        settings.set("auto_approve", True)
-        prompt = settings.build_system_prompt_addendum()
-        assert "automatically" in prompt
 
     def test_prompt_is_string(self, skill_settings):
         settings, _ = skill_settings
