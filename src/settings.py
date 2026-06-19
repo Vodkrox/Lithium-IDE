@@ -9,8 +9,6 @@ class SettingsManager:
     DEFAULTS = {
         "theme": "Graphite",
         "language": "Python",
-        "last_file": None,
-        "last_folder": None,
         "ai_level_mode": "auto",
         "ai_level": "Medium",
         "ai_skill_file_scope": "open_file",

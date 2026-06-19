@@ -256,16 +256,6 @@ class FileExplorer:
 
         self.current_folder = folder_path
         self.path_label.config(text=folder_path)
-        if (
-            self.controller
-            and hasattr(self.controller, "settings_manager")
-            and self.controller.settings_manager
-        ):
-            try:
-                self.controller.settings_manager.set("last_folder", folder_path)
-            except Exception:
-                pass
-
         for item in self.tree.get_children():
             self.tree.delete(item)
 
@@ -434,10 +424,6 @@ class FileExplorer:
                 self.controller.on_file_open_callback()
             self.controller.has_unsaved_changes = False
             self.controller.mark_clean()
-            try:
-                self.controller.save_cache()
-            except Exception:
-                pass
         except Exception as e:
             messagebox.showerror("Error", f"Cannot open file: {e}")
 
