@@ -26,6 +26,7 @@ def get_models_dir():
 
 _model_cache = {}
 _model_cache_lock = threading.Lock()
+_model_cache_pending = {}
 
 MODEL_CANDIDATES = [get_default_model()]
 
@@ -255,16 +256,48 @@ def download_model_url(url, progress_callback=None):
 def clear_model_cache():
     """Unload cached llama-cpp / transformers models."""
     with _model_cache_lock:
+        for ready_event in _model_cache_pending.values():
+            ready_event.set()
+        _model_cache_pending.clear()
         _model_cache.clear()
 
 
 def _get_cached_model(cache_key, factory):
+    should_create = False
     with _model_cache_lock:
         cached_model = _model_cache.get(cache_key)
-        if cached_model is None:
+        if cached_model is not None:
+            return cached_model
+
+        ready_event = _model_cache_pending.get(cache_key)
+        if ready_event is None:
+            ready_event = threading.Event()
+            _model_cache_pending[cache_key] = ready_event
+            should_create = True
+
+    if should_create:
+        try:
             cached_model = factory()
+        except Exception:
+            with _model_cache_lock:
+                _model_cache_pending.pop(cache_key, None)
+                ready_event.set()
+            raise
+
+        with _model_cache_lock:
             _model_cache[cache_key] = cached_model
-        return cached_model
+            _model_cache_pending.pop(cache_key, None)
+            ready_event.set()
+            return cached_model
+
+    ready_event.wait()
+    with _model_cache_lock:
+        cached_model = _model_cache.get(cache_key)
+
+    if cached_model is None:
+        raise RuntimeError("Model initialization did not complete successfully.")
+
+    return cached_model
 
 
 def list_model_candidates():
@@ -537,4 +570,3 @@ def generate_text_from_model(
                 "Install them or download a GGUF model (.gguf) to use with llama-cpp-python."
             )
         return _generate_with_transformers(resolved_source, prompt_text, max_tokens=max_tokens)
-

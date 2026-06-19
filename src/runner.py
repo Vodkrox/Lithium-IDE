@@ -48,7 +48,7 @@ def run_code(file_path, console_widget, on_complete=None):
             python_executable = get_python_executable()
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
-            working_directory = os.path.dirname(os.path.abspath(file_path)) or None
+            working_directory = os.path.dirname(os.path.abspath(file_path)) or "."
             process = subprocess.Popen(
                 [python_executable, "-u", file_path],
                 stdout=subprocess.PIPE,
