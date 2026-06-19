@@ -1,7 +1,3 @@
-"""
-File Explorer module for Lithium IDE.
-Provides a treeview-based file explorer panel that displays the current folder structure.
-"""
 
 import os
 import tkinter as tk
@@ -11,18 +7,8 @@ from src.utils import resource_path
 
 
 class FileExplorer:
-    """A file explorer panel that displays the project folder structure."""
 
     def __init__(self, parent, controller, theme_colors, theme_fonts):
-        """
-        Initialize the File Explorer panel.
-
-        Args:
-            parent: The parent widget (typically a Frame)
-            controller: The LithiumEditorController instance for file operations
-            theme_colors: Dictionary of theme colors
-            theme_fonts: Dictionary of theme fonts
-        """
         self.parent = parent
         self.controller = controller
         self.colors = theme_colors
@@ -35,7 +21,6 @@ class FileExplorer:
         self._load_icons()
 
     def _setup_ui(self):
-        """Set up the file explorer UI components."""
         self.frame = tk.Frame(self.parent, bg=self.colors["bg_dark"])
         self.frame.pack(fill=tk.BOTH, expand=True)
 
@@ -132,7 +117,6 @@ class FileExplorer:
         self._configure_tree_style()
 
     def _configure_tree_style(self):
-        """Configure the treeview style to match the theme."""
         style = ttk.Style()
 
         style.configure(
@@ -161,7 +145,6 @@ class FileExplorer:
         self.tree.configure(style="FileExplorer.Treeview")
 
     def _load_icons(self):
-        """Load icons for files and folders."""
         try:
             self.icons["folder"] = tk.PhotoImage(file=resource_path("src/assets/folder.png"))
         except Exception:
@@ -198,7 +181,6 @@ class FileExplorer:
             self.icons["generic"] = None
 
     def _get_icon_for_file(self, filename):
-        """Get the appropriate icon for a file based on its extension."""
         ext_map = {
             ".py": "python",
             ".js": "javascript",
@@ -227,18 +209,11 @@ class FileExplorer:
         return self.icons.get(icon_key, self.icons.get("generic"))
 
     def open_folder_dialog(self):
-        """Open a folder selection dialog."""
         folder = filedialog.askdirectory(title="Open Folder")
         if folder:
             self.load_folder(folder)
 
     def load_folder(self, folder_path):
-        """
-        Load a folder into the file explorer.
-
-        Args:
-            folder_path: Path to the folder to load
-        """
         if not os.path.isdir(folder_path):
             messagebox.showerror("Error", "The selected path is not a valid directory.")
             return
@@ -268,7 +243,6 @@ class FileExplorer:
             except Exception:
                 pass
     def _find_item_by_path(self, parent, target_path):
-        """Recursively search the tree for an item matching target_path and return its item id or None."""
         for child in self.tree.get_children(parent):
             vals = self.tree.item(child, "values")
             if vals and vals[0] == target_path:
@@ -279,12 +253,6 @@ class FileExplorer:
         return None
 
     def mark_file_dirty(self, file_path, is_dirty):
-        """Mark the file in the treeview with an unsaved marker (e.g., a dot) next to its name.
-
-        Args:
-            file_path: absolute path to the file to mark
-            is_dirty: boolean indicating dirty state
-        """
         if not file_path or not os.path.exists(file_path):
             return
         item_id = self._find_item_by_path('', file_path)
@@ -303,14 +271,6 @@ class FileExplorer:
         return
 
     def _populate_tree(self, tree, parent, path):
-        """
-        Recursively populate the tree with files and folders.
-
-        Args:
-            tree: The Treeview widget
-            parent: Parent item ID
-            path: File system path
-        """
         try:
             items = sorted(os.listdir(path), key=lambda x: (not os.path.isdir(os.path.join(path, x)), x.lower()))
         except PermissionError:
@@ -333,7 +293,6 @@ class FileExplorer:
                     tree.insert(parent, "end", text=f"  {item}", values=(item_path,))
 
     def _on_double_click(self, event):
-        """Handle double-click on tree item."""
         selection = self.tree.selection()
         if not selection:
             return
@@ -352,16 +311,9 @@ class FileExplorer:
                     pass
 
     def _on_enter_key(self, event):
-        """Handle Enter key press on tree item."""
         self._on_double_click(event)
 
     def _open_file(self, path):
-        """
-        Open a file in the editor.
-
-        Args:
-            path: Path to the file to open
-        """
         if self.controller:
             try:
                 file_size = os.path.getsize(path)
@@ -397,7 +349,6 @@ class FileExplorer:
                 messagebox.showerror("Error", f"Cannot open file: {e}")
 
     def _show_context_menu(self, event):
-        """Show context menu on right-click."""
         item = self.tree.identify_row(event.y)
 
         menu = tk.Menu(self.parent, tearoff=0, bg=self.colors["bg_header"], fg=self.colors["fg_light"])
@@ -439,7 +390,6 @@ class FileExplorer:
             menu.grab_release()
 
     def _new_file_in_path(self, folder_path):
-        """Create a new file in the specified folder path."""
         dialog = tk.Toplevel(self.parent)
         dialog.title("New File")
         dialog.geometry("300x120")
@@ -515,7 +465,6 @@ class FileExplorer:
         ).pack(side=tk.LEFT, padx=5)
 
     def go_to_parent(self):
-        """Navigate to the parent folder of the currently-opened folder."""
         if not self.current_folder:
             return
         parent = os.path.dirname(self.current_folder)
@@ -526,7 +475,6 @@ class FileExplorer:
                 pass
 
     def _new_folder_in_path(self, folder_path):
-        """Create a new folder in the specified folder path."""
         dialog = tk.Toplevel(self.parent)
         dialog.title("New Folder")
         dialog.geometry("300x120")
@@ -601,7 +549,6 @@ class FileExplorer:
         ).pack(side=tk.LEFT, padx=5)
 
     def _new_file(self, parent_item):
-        """Create a new file in the selected folder."""
         values = self.tree.item(parent_item, "values")
         if not values:
             return
@@ -683,7 +630,6 @@ class FileExplorer:
         ).pack(side=tk.LEFT, padx=5)
 
     def _new_folder(self, parent_item):
-        """Create a new folder in the selected folder."""
         values = self.tree.item(parent_item, "values")
         if not values:
             return
@@ -764,7 +710,6 @@ class FileExplorer:
         ).pack(side=tk.LEFT, padx=5)
 
     def _rename_item(self, path, item_id):
-        """Rename a file or folder."""
         old_name = os.path.basename(path)
 
         dialog = tk.Toplevel(self.parent)
@@ -844,7 +789,6 @@ class FileExplorer:
         ).pack(side=tk.LEFT, padx=5)
 
     def _delete_item(self, path, item_id):
-        """Delete a file or folder."""
         name = os.path.basename(path)
         is_dir = os.path.isdir(path)
 
@@ -865,29 +809,24 @@ class FileExplorer:
                 messagebox.showerror("Error", f"Cannot delete: {e}")
 
     def _copy_path(self, path):
-        """Copy the file path to clipboard."""
         self.parent.clipboard_clear()
         self.parent.clipboard_append(path)
         self.parent.update()
 
     def refresh(self):
-        """Refresh the file explorer."""
         if self.current_folder:
             self.load_folder(self.current_folder)
 
     def collapse_all(self):
-        """Collapse all tree nodes."""
         for item in self.tree.get_children():
             self._collapse_recursive(item)
 
     def _collapse_recursive(self, item):
-        """Recursively collapse tree nodes."""
         self.tree.item(item, open=False)
         for child in self.tree.get_children(item):
             self._collapse_recursive(child)
 
     def apply_theme(self):
-        """Apply theme colors to the file explorer."""
         self.frame.configure(bg=self.colors["bg_dark"])
         self.header_frame.configure(bg=self.colors["bg_header"])
         self.header_label.configure(bg=self.colors["bg_header"], fg=self.colors["fg_dim"])
@@ -912,5 +851,4 @@ class FileExplorer:
         self._configure_tree_style()
 
     def get_frame(self):
-        """Get the main frame widget."""
         return self.frame

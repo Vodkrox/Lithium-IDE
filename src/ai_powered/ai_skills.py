@@ -1,21 +1,3 @@
-"""
-AI Skills Module - Provides file and editor manipulation capabilities for the AI assistant.
-
-This module defines a set of "skills" that the AI can use to manipulate files and code:
-- add_lines: Insert lines at a specific position in the editor
-- delete_lines: Delete lines from the editor
-- create_file: Create a new file with content
-- delete_file: Delete a file
-- create_folder: Create a new folder
-- delete_folder: Delete a folder (and its contents)
-
-The AI responses are parsed for special XML-like tags that indicate skill usage:
-<skill name="skill_name">
-  <parameter name="param1">value1</parameter>
-  <parameter name="param2">value2</parameter>
-  ...
-</skill>
-"""
 
 import os
 import re
@@ -24,7 +6,6 @@ from typing import Dict, List, Any, Optional, Callable
 
 
 class AISkillResult:
-    """Represents the result of executing an AI skill."""
 
     def __init__(self, success: bool, message: str, data: Any = None, requires_approval: bool = False):
         self.success = success
@@ -37,33 +18,14 @@ class AISkillResult:
         return f"{status} {self.message}"
 
     def is_modification(self) -> bool:
-        """Check if this skill modifies files or code."""
         return self.requires_approval
 
 
 class AISkillsExecutor:
-    """
-    Executes AI skills for file and editor manipulation.
-
-    The executor maintains a set of registered skills and can parse
-    AI responses to find and execute skill invocations.
-
-    All file operations are restricted to the project folder for security.
-    """
 
     def __init__(self, editor_getter: Callable, editor_setter: Callable,
                  file_path_getter: Callable, project_folder_getter: Optional[Callable] = None,
                  status_callback: Optional[Callable] = None):
-        """
-        Initialize the AI Skills Executor.
-
-        Args:
-            editor_getter: Function that returns the current editor content as a string
-            editor_setter: Function that sets the editor content (receives a string)
-            file_path_getter: Function that returns the current file path
-            project_folder_getter: Function that returns the project folder path (for security restrictions)
-            status_callback: Optional function to call with status updates
-        """
         self.editor_getter = editor_getter
         self.editor_setter = editor_setter
         self.file_path_getter = file_path_getter
@@ -82,18 +44,15 @@ class AISkillsExecutor:
         }
 
     def _log(self, message: str):
-        """Log a status message if callback is available."""
         if self.status_callback:
             self.status_callback(message)
 
     def _get_project_folder(self) -> str:
-        """Get the project folder path. Returns empty string if not set."""
         if self.project_folder_getter:
             return self.project_folder_getter() or ""
         return ""
 
     def _is_path_in_project(self, path: str) -> bool:
-        """Check if a path is within the project folder for security."""
         project_folder = self._get_project_folder()
         if not project_folder:
             return True
@@ -104,10 +63,6 @@ class AISkillsExecutor:
         return abs_path.startswith(abs_project + os.sep) or abs_path == abs_project
 
     def _resolve_path(self, path: str) -> tuple:
-        """
-        Resolve a path and check if it's within the project folder.
-        Returns (resolved_path, error_message) - error_message is None if valid.
-        """
         if not path:
             return None, "No path provided"
 
@@ -128,19 +83,12 @@ class AISkillsExecutor:
         return path, None
 
     def _get_line_count(self) -> int:
-        """Get the current number of lines in the editor."""
         content = self.editor_getter()
         if not content:
             return 0
         return len(content.splitlines())
 
     def _preview_add_lines_on_content(self, current_content: str, params: Dict[str, str]) -> AISkillResult:
-        """Preview adding lines against explicit content.
-
-        This is used by parse_for_preview to simulate multiple AI skills in order.
-        Without sequential simulation, a delete_lines followed by add_lines could be
-        previewed against the original file twice and reintroduce deleted content.
-        """
         line_num = params.get("line")
         content = params.get("content", "")
 
@@ -173,7 +121,6 @@ class AISkillsExecutor:
                            requires_approval=True)
 
     def _preview_delete_lines_on_content(self, current_content: str, params: Dict[str, str]) -> AISkillResult:
-        """Preview deleting lines against explicit content for sequential simulation."""
         lines_to_delete = params.get("lines")
         start_line = params.get("line")
         count = params.get("count", "1")
@@ -209,7 +156,6 @@ class AISkillsExecutor:
                            requires_approval=True)
 
     def _preview_replace_file_on_content(self, current_content: str, params: Dict[str, str]) -> AISkillResult:
-        """Preview replacing the entire editor content."""
         content = params.get("content", "")
         if content is None:
             return AISkillResult(False, "No content provided for replace_file")
@@ -223,23 +169,15 @@ class AISkillsExecutor:
                            requires_approval=True)
 
     def preview_add_lines(self, params: Dict[str, str]) -> AISkillResult:
-        """
-        Preview adding lines to the editor (without applying).
-        Returns the proposed new content for approval.
-        """
         return self._preview_add_lines_on_content(self.editor_getter(), params)
 
     def apply_add_lines(self, new_content: str) -> AISkillResult:
-        """Apply the approved add_lines change."""
         self.editor_setter(new_content)
         lines = new_content.splitlines()
         self._log(f"Added lines")
         return AISkillResult(True, f"Successfully added lines")
 
     def _skill_add_lines(self, params: Dict[str, str]) -> AISkillResult:
-        """
-        Add lines to the editor at a specific position.
-        """
         line_num = params.get("line")
         content = params.get("content", "")
 
@@ -276,15 +214,6 @@ class AISkillsExecutor:
         return AISkillResult(True, f"Successfully added {len(content.splitlines())} line(s) at line {line_idx + 1}")
 
     def _skill_delete_lines(self, params: Dict[str, str]) -> AISkillResult:
-        """
-        Delete lines from the editor.
-
-        Parameters:
-            line: The starting line number to delete (1-indexed)
-            count: Number of lines to delete (default: 1)
-            OR
-            lines: Comma-separated list of line numbers to delete
-        """
         lines_to_delete = params.get("lines")
         start_line = params.get("line")
         count = params.get("count", "1")
@@ -329,13 +258,6 @@ class AISkillsExecutor:
         return AISkillResult(True, f"Successfully deleted {deleted_count} line(s)")
 
     def _skill_create_file(self, params: Dict[str, str]) -> AISkillResult:
-        """
-        Create a new file with content.
-
-        Parameters:
-            path: The file path (relative to project or absolute)
-            content: The file content (optional)
-        """
         path = params.get("path")
         content = params.get("content", "")
 
@@ -362,12 +284,6 @@ class AISkillsExecutor:
             return AISkillResult(False, f"Failed to create file: {str(e)}")
 
     def _skill_delete_file(self, params: Dict[str, str]) -> AISkillResult:
-        """
-        Delete a file.
-
-        Parameters:
-            path: The file path to delete
-        """
         path = params.get("path")
 
         if not path:
@@ -392,12 +308,6 @@ class AISkillsExecutor:
             return AISkillResult(False, f"Failed to delete file: {str(e)}")
 
     def _skill_create_folder(self, params: Dict[str, str]) -> AISkillResult:
-        """
-        Create a new folder.
-
-        Parameters:
-            path: The folder path to create
-        """
         path = params.get("path")
 
         if not path:
@@ -419,13 +329,6 @@ class AISkillsExecutor:
             return AISkillResult(False, f"Failed to create folder: {str(e)}")
 
     def _skill_delete_folder(self, params: Dict[str, str]) -> AISkillResult:
-        """
-        Delete a folder and its contents.
-
-        Parameters:
-            path: The folder path to delete
-            recursive: Whether to delete recursively (default: true)
-        """
         path = params.get("path")
         recursive = params.get("recursive", "true").lower() == "true"
 
@@ -455,8 +358,6 @@ class AISkillsExecutor:
             return AISkillResult(False, f"Failed to delete folder: {str(e)}")
 
     def parse_for_preview(self, response_text: str) -> List[tuple]:
-        """Parse AI response for skill invocations and generate previews (without executing).
-        Returns list of tuples: (skill_name, AISkillResult)"""
         results = []
         simulated_content = self.editor_getter()
         skill_pattern = r'<skill\s+name="([^"]+)">(.*?)</skill>'
@@ -500,15 +401,12 @@ class AISkillsExecutor:
         return results
 
     def preview_delete_lines(self, params: Dict[str, str]) -> AISkillResult:
-        """Preview deleting lines (without applying)."""
         return self._preview_delete_lines_on_content(self.editor_getter(), params)
 
     def preview_replace_file(self, params: Dict[str, str]) -> AISkillResult:
-        """Preview replacing the entire current file content."""
         return self._preview_replace_file_on_content(self.editor_getter(), params)
 
     def preview_create_file(self, params: Dict[str, str]) -> AISkillResult:
-        """Preview creating a file (without applying)."""
         path = params.get("path")
         content = params.get("content", "")
 
@@ -524,7 +422,6 @@ class AISkillsExecutor:
                            requires_approval=True)
 
     def preview_delete_file(self, params: Dict[str, str]) -> AISkillResult:
-        """Preview deleting a file (without applying)."""
         path = params.get("path")
         if not path:
             return AISkillResult(False, "No file path provided")
@@ -541,7 +438,6 @@ class AISkillsExecutor:
                            requires_approval=True)
 
     def preview_create_folder(self, params: Dict[str, str]) -> AISkillResult:
-        """Preview creating a folder (without applying)."""
         path = params.get("path")
         if not path:
             return AISkillResult(False, "No folder path provided")
@@ -555,7 +451,6 @@ class AISkillsExecutor:
                            requires_approval=True)
 
     def preview_delete_folder(self, params: Dict[str, str]) -> AISkillResult:
-        """Preview deleting a folder (without applying)."""
         path = params.get("path")
         if not path:
             return AISkillResult(False, "No folder path provided")
@@ -572,7 +467,6 @@ class AISkillsExecutor:
                            requires_approval=True)
 
     def apply_skill(self, skill_name: str, result: AISkillResult) -> AISkillResult:
-        """Apply an approved skill change."""
         data = result.data or {}
 
         if skill_name in ("add_lines", "insert_lines"):
@@ -602,12 +496,6 @@ class AISkillsExecutor:
         return AISkillResult(False, "Failed to apply change")
 
     def _skill_replace_file(self, params: Dict[str, str]) -> AISkillResult:
-        """
-        Replace the entire current file content.
-
-        Parameters:
-            content: The new file content
-        """
         content = params.get("content", "")
         if content is None:
             return AISkillResult(False, "No content provided for replace_file")
@@ -621,16 +509,6 @@ class AISkillsExecutor:
         return AISkillResult(True, "Successfully replaced file content")
 
     def execute_skill(self, skill_name: str, params: Dict[str, str]) -> AISkillResult:
-        """
-        Execute a specific skill with the given parameters.
-
-        Args:
-            skill_name: The name of the skill to execute
-            params: Dictionary of parameters for the skill
-
-        Returns:
-            AISkillResult indicating success or failure
-        """
         if skill_name not in self._skills:
             return AISkillResult(False, f"Unknown skill: {skill_name}")
 
@@ -638,21 +516,6 @@ class AISkillsExecutor:
         return skill_func(params)
 
     def parse_and_execute(self, response_text: str) -> List[AISkillResult]:
-        """
-        Parse an AI response for skill invocations and execute them.
-
-        The parser looks for XML-like skill tags:
-        <skill name="skill_name">
-          <parameter name="param1">value1</parameter>
-          <parameter name="param2">value2</parameter>
-        </skill>
-
-        Args:
-            response_text: The AI response text to parse
-
-        Returns:
-            List of AISkillResult objects for each executed skill
-        """
         results = []
 
         skill_pattern = r'<skill\s+name="([^"]+)">(.*?)</skill>'
@@ -677,16 +540,6 @@ class AISkillsExecutor:
         return results
 
     def get_clean_response(self, response_text: str) -> str:
-        """
-        Remove skill tags from the response to show only the conversational text.
-
-        Args:
-            response_text: The original AI response
-
-        Returns:
-            The response with skill tags removed. If skill blocks are present,
-            any surrounding or trailing text is treated as noise and suppressed.
-        """
         has_skill_blocks = bool(re.search(r'<skill\s+name="[^"]+">', response_text, flags=re.IGNORECASE))
         cleaned = re.sub(r'<skill\s+name="[^"]+">.*?</skill>', '', response_text, flags=re.DOTALL | re.IGNORECASE)
         cleaned = cleaned.strip()
@@ -695,11 +548,9 @@ class AISkillsExecutor:
         return cleaned
 
     def get_available_skills(self) -> List[str]:
-        """Return a list of available skill names."""
         return list(self._skills.keys())
 
     def get_skill_description(self, skill_name: str) -> str:
-        """Get a description of what a skill does."""
         descriptions = {
             "add_lines": "Insert lines of code at a specific position in the editor",
             "delete_lines": "Delete lines from the editor",
@@ -716,11 +567,6 @@ class AISkillsExecutor:
         self.allow_run_commands = bool(allow_run_commands)
 
     def generate_skill_prompt(self, file_scope="open_file") -> str:
-        """
-        Generate a concise prompt that explains available skills to the AI.
-        This should be appended to the system prompt.
-        Note: Only editor manipulation skills are available (no file/folder creation/deletion).
-        """
         prompt = """
 You have skills to manipulate the current open file's content. Use XML tags in responses:
 
@@ -779,19 +625,6 @@ _default_executor = None
 
 def get_executor(editor_getter=None, editor_setter=None, file_path_getter=None,
                  project_folder_getter=None, status_callback=None):
-    """
-    Get or create the default AI Skills Executor.
-
-    Args:
-        editor_getter: Function that returns the current editor content
-        editor_setter: Function that sets the editor content
-        file_path_getter: Function that returns the current file path
-        project_folder_getter: Function that returns the project folder path (for security)
-        status_callback: Optional function for status updates
-
-    Returns:
-        AISkillsExecutor instance
-    """
     global _default_executor
 
     if _default_executor is None:
@@ -804,6 +637,5 @@ def get_executor(editor_getter=None, editor_setter=None, file_path_getter=None,
 
 
 def reset_executor():
-    """Reset the default executor (useful for testing)."""
     global _default_executor
     _default_executor = None

@@ -870,7 +870,6 @@ class LithiumIDE:
             self.status_label.config(text="AI: local backend not available")
 
     def show_ai_skills_info(self):
-        """Show information about available AI Skills."""
         info_text = """AI Skills - File and Code Manipulation
 
 The AI assistant can perform the following actions using special skill tags:
@@ -931,7 +930,6 @@ Example prompts:
         self._apply_window_theme()
 
     def _apply_window_theme(self):
-        """Re-apply the active theme to every persistent UI region."""
         for paned in (self.main_paned, self.center_right_paned):
             paned.config(
                 bg=theme.COLORS["bg_dark"],
@@ -1092,7 +1090,6 @@ Example prompts:
 
 
     def open_folder(self):
-        """Open a folder in the file explorer."""
         folder = filedialog.askdirectory(title="Open Folder")
         if folder:
             self.show_explorer()
@@ -1101,14 +1098,12 @@ Example prompts:
             self.update_editor_ai_state()
 
     def hide_explorer(self):
-        """Hide the file explorer sidebar."""
         try:
             self.main_paned.forget(self.explorer_frame)
         except Exception:
             pass
 
     def show_explorer(self):
-        """Show the file explorer sidebar."""
         try:
             panes = self.main_paned.panes()
             if str(self.explorer_frame) not in panes:
@@ -1595,7 +1590,6 @@ Example prompts:
             self._finish_dependency_setup()
 
     def _init_ai_skills(self):
-        """Initialize the AI Skills Executor with editor callbacks."""
         def get_editor_content():
             return self.editor.get("1.0", tk.END)
 
@@ -1666,12 +1660,6 @@ Example prompts:
         threading.Thread(target=self.run_chat_ai, args=(message,), daemon=True).start()
 
     def _build_ai_editor_prompt(self, user_message):
-        """Build an AI prompt that includes the current file content with line numbers.
-
-        The AI needs this context so it can decide whether it must delete, replace,
-        or add lines before proposing changes. Without the numbered file snapshot,
-        the model tends to append code blindly instead of repairing invalid code.
-        """
         file_path = self.controller.file_path or "Untitled"
         language = self.selected_lang.get()
         content = self.editor.get("1.0", "end-1c")
@@ -1744,7 +1732,6 @@ For example, if line 1 is invalid plain text and the user asks for Python hello 
 """
 
     def _looks_like_broken_ai_edit_response(self, response):
-        """Detect meta/prompt-leak responses that cannot drive Lithium skills."""
         if not response or "<skill" in response.lower():
             return False
         broken_markers = (
@@ -1759,7 +1746,6 @@ For example, if line 1 is invalid plain text and the user asks for Python hello 
         return any(marker in lowered for marker in broken_markers)
 
     def _retry_if_broken_ai_edit_response(self, original_user_message, editor_prompt, response):
-        """Retry once when the model echoes instructions instead of emitting skills."""
         if not self._looks_like_broken_ai_edit_response(response):
             return response
 
@@ -1861,7 +1847,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
             self.root.after(0, lambda: self.status_label.config(text="AI: Error"))
 
     def _show_loading_indicator(self):
-        """Show a minimal monochrome loader while the AI generates a response."""
         self.chat_history.config(state=tk.NORMAL)
 
         bg = theme.COLORS.get("bg_editor", "#080808")
@@ -1921,7 +1906,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
         self._loader_after_id = self.root.after(120, self._animate_loader)
 
     def _remove_loading_indicator(self):
-        """Remove the loading indicator from chat."""
         self._loader_animating = False
 
         if getattr(self, "_loader_after_id", None):
@@ -1943,7 +1927,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
                 delattr(self, attr)
 
     def _show_approval_dialog(self, index, pending_approvals, all_results, clean_response):
-        """Show approval dialog inline in the chat for pending skill changes."""
         if index >= len(pending_approvals):
             self.chat_history.config(state=tk.NORMAL)
             self.chat_history.insert(tk.END, "\n" + "="*50 + "\n")
@@ -2018,7 +2001,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
 
     def _show_inline_approval(self, result, skill_name, result_idx,
                               all_results, pending_approvals, index, clean_response):
-        """Show an inline approval request in the chat with approve/reject buttons."""
 
         btn_frame = tk.Frame(self.chat_history, bg=theme.COLORS.get("bg_dark", "#0B0D10"))
 
@@ -2096,7 +2078,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
         self.chat_history.config(state=tk.DISABLED)
 
     def _get_skill_name_from_result(self, result_idx, all_results):
-        """Get skill name from result index (simplified - in real impl would track names)."""
         return "unknown"
 
     def append_to_chat_history(self, sender, text):
@@ -2321,7 +2302,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
         review_win.wait_window(review_win)
 
     def show_conversations_dropdown(self):
-        """Show conversations dropdown menu from the AI chat header."""
         conversations = self.conversation_manager.list_conversations()
         self._conversation_ids = [conv["id"] for conv in conversations]
 
@@ -2354,7 +2334,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
         menu.post(x, y)
 
     def refresh_conversations_list(self):
-        """Refresh the conversation dropdown button label."""
         if self.conversation_manager.current_conversation:
             title = self.conversation_manager.current_conversation.title[:20]
             self.conv_dropdown_btn.config(text=f"💬 {title} ▾")
@@ -2362,7 +2341,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
             self.conv_dropdown_btn.config(text="💬 No conversation ▾")
 
     def new_conversation(self):
-        """Create a new conversation."""
         if self.conversation_manager.current_conversation:
             self.save_current_conversation_to_history()
 
@@ -2377,7 +2355,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
         self.append_to_chat_history("AI", "Hello! How can I help you today?")
 
     def load_conversation(self, conversation_id):
-        """Load a conversation and display its messages."""
         if self.conversation_manager.current_conversation:
             self.save_current_conversation_to_history()
 
@@ -2403,14 +2380,12 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
         self.refresh_conversations_list()
 
     def save_current_conversation_to_history(self):
-        """Save the current chat history to the conversation."""
         if not self.conversation_manager.current_conversation:
             return
 
         self.conversation_manager.save_conversation()
 
     def rename_conversation(self, conversation_id):
-        """Rename a conversation."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Rename Conversation")
         dialog.geometry("300x120")
@@ -2481,7 +2456,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
         ).pack(side=tk.LEFT, padx=5)
 
     def delete_conversation(self, conversation_id):
-        """Delete a conversation after confirmation."""
         if messagebox.askyesno("Delete Conversation", "Are you sure you want to delete this conversation?"):
             self.conversation_manager.delete_conversation(conversation_id)
             self.refresh_conversations_list()
@@ -2492,7 +2466,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
                 self.chat_history.config(state=tk.DISABLED)
 
     def export_conversation(self, conversation_id):
-        """Export a conversation to a file."""
         filetypes = [
             ("Text files", "*.txt"),
             ("JSON files", "*.json"),
@@ -2527,7 +2500,6 @@ Return ONLY the corrected <skill> blocks needed for the current open file. No pr
                 messagebox.showerror("Error", f"Failed to export: {e}")
 
     def update_editor_ai_state(self):
-        """Update the enabled/disabled state of editor and AI features based on whether a file is opened."""
         has_file_opened = self.controller.file_path is not None
 
         if has_file_opened:

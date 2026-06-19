@@ -10,7 +10,6 @@ from src.ai_powered.ai_level import get_default_model
 
 
 def _get_appdata_dir():
-    """Return the LithiumIDE appdata directory."""
     if sys.platform == "win32":
         base = os.getenv("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
     elif sys.platform == "darwin":
@@ -21,7 +20,6 @@ def _get_appdata_dir():
 
 
 def get_models_dir():
-    """Return the path to the models storage directory inside appdata."""
     return os.path.join(_get_appdata_dir(), "models")
 
 _model_cache = {}
@@ -249,12 +247,10 @@ def _download_model_url(url, progress_callback=None):
 
 
 def download_model_url(url, progress_callback=None):
-    """Public wrapper to download a model URL with optional progress callback."""
     return _download_model_url(url, progress_callback=progress_callback)
 
 
 def clear_model_cache():
-    """Unload cached llama-cpp / transformers models."""
     with _model_cache_lock:
         for ready_event in _model_cache_pending.values():
             ready_event.set()
@@ -303,7 +299,6 @@ def _get_cached_model(cache_key, factory):
 
 
 def list_model_candidates():
-    """Return the built-in model candidate."""
     return [MODEL_CANDIDATES[0]] if MODEL_CANDIDATES else []
 
 
@@ -326,7 +321,6 @@ def get_runtime_status():
 
 
 def find_local_model():
-    """Return the path to a previously downloaded local model, if any."""
     models_dir = get_models_dir()
     if not os.path.isdir(models_dir):
         return None
@@ -505,12 +499,6 @@ def _generate_with_transformers(model_path, prompt, max_tokens=256):
 
 
 def _format_chat_prompt(system_prompt, user_prompt):
-    """Format prompts for instruct/chat-tuned models such as Qwen Coder.
-
-    The previous plain concatenation made some instruction models echo policy-like
-    guidance instead of producing the requested XML skill tags. Qwen GGUF models
-    work much better with the ChatML format below.
-    """
     return (
         "<|im_start|>system\n"
         f"{system_prompt.strip()}\n"

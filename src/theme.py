@@ -48,12 +48,6 @@ def load_themes():
 load_themes()
 
 def _complete_theme(theme_data):
-    """Return a complete color palette for a theme.
-
-    Theme JSON files may omit optional/derived colors.  Keeping this merge in
-    one place prevents old Catppuccin-only values from leaking into another
-    theme when the user switches themes.
-    """
     theme_data = theme_data or {}
     complete = dict(DEFAULT_GRAPHITE)
     complete.update(theme_data)
@@ -70,7 +64,6 @@ def _complete_theme(theme_data):
 
 
 def get_color(name, fallback=None):
-    """Read a color from the active theme with a safe fallback."""
     return COLORS.get(name, fallback if fallback is not None else DEFAULT_GRAPHITE.get(name, "#ffffff"))
 
 

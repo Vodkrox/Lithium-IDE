@@ -1,7 +1,3 @@
-"""
-Conversation Manager module for Lithium IDE.
-Provides conversation history management for AI chat sessions.
-"""
 
 import os
 import sys
@@ -12,7 +8,6 @@ from typing import List, Dict, Optional, Any
 
 
 class Conversation:
-    """Represents a single conversation with the AI."""
 
     def __init__(self, conversation_id: str = None, title: str = "New Conversation",
                  messages: List[Dict] = None, created_at: str = None, updated_at: str = None):
@@ -23,7 +18,6 @@ class Conversation:
         self.updated_at = updated_at or datetime.now().isoformat()
 
     def add_message(self, role: str, content: str, metadata: Dict = None):
-        """Add a message to the conversation."""
         message = {
             "role": role,
             "content": content,
@@ -37,7 +31,6 @@ class Conversation:
             self.title = content[:50] + ("..." if len(content) > 50 else "")
 
     def to_dict(self) -> Dict:
-        """Convert conversation to dictionary for serialization."""
         return {
             "id": self.id,
             "title": self.title,
@@ -48,7 +41,6 @@ class Conversation:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'Conversation':
-        """Create a Conversation from a dictionary."""
         return cls(
             conversation_id=data.get("id"),
             title=data.get("title", "New Conversation"),
@@ -62,15 +54,8 @@ class Conversation:
 
 
 class ConversationManager:
-    """Manages conversation history for AI chat sessions."""
 
     def __init__(self, storage_path: str = None):
-        """
-        Initialize the Conversation Manager.
-
-        Args:
-            storage_path: Directory path to store conversation files
-        """
         if storage_path is None:
             storage_path = self._get_default_storage_path()
         self.storage_path = storage_path
@@ -79,7 +64,6 @@ class ConversationManager:
 
     @staticmethod
     def _get_default_storage_path():
-        """Return the default conversations directory inside appdata."""
         if sys.platform == "win32":
             base = os.getenv("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
         elif sys.platform == "darwin":
@@ -89,23 +73,12 @@ class ConversationManager:
         return os.path.join(base, "LithiumIDE", "conversations")
 
     def _ensure_storage_exists(self):
-        """Create storage directory if it doesn't exist."""
         os.makedirs(self.storage_path, exist_ok=True)
 
     def _get_conversation_path(self, conversation_id: str) -> str:
-        """Get the file path for a conversation."""
         return os.path.join(self.storage_path, f"{conversation_id}.json")
 
     def save_conversation(self, conversation: Conversation = None) -> bool:
-        """
-        Save a conversation to disk.
-
-        Args:
-            conversation: Conversation to save, or current if None
-
-        Returns:
-            True if saved successfully
-        """
         if conversation is None:
             conversation = self.current_conversation
 
@@ -122,15 +95,6 @@ class ConversationManager:
             return False
 
     def load_conversation(self, conversation_id: str) -> Optional[Conversation]:
-        """
-        Load a conversation from disk.
-
-        Args:
-            conversation_id: ID of the conversation to load
-
-        Returns:
-            Loaded Conversation or None if not found
-        """
         try:
             path = self._get_conversation_path(conversation_id)
             if not os.path.exists(path):
@@ -147,30 +111,12 @@ class ConversationManager:
             return None
 
     def create_conversation(self, title: str = "New Conversation") -> Conversation:
-        """
-        Create a new conversation.
-
-        Args:
-            title: Optional title for the conversation
-
-        Returns:
-            The newly created Conversation
-        """
         conversation = Conversation(title=title)
         self.current_conversation = conversation
         self.save_conversation(conversation)
         return conversation
 
     def delete_conversation(self, conversation_id: str) -> bool:
-        """
-        Delete a conversation.
-
-        Args:
-            conversation_id: ID of the conversation to delete
-
-        Returns:
-            True if deleted successfully
-        """
         try:
             path = self._get_conversation_path(conversation_id)
             if os.path.exists(path):
@@ -185,12 +131,6 @@ class ConversationManager:
             return False
 
     def list_conversations(self) -> List[Dict]:
-        """
-        List all saved conversations with summary info.
-
-        Returns:
-            List of conversation summaries (id, title, message_count, updated_at)
-        """
         conversations = []
 
         try:
@@ -217,31 +157,12 @@ class ConversationManager:
         return conversations
 
     def get_conversation_messages(self, conversation_id: str) -> List[Dict]:
-        """
-        Get all messages from a conversation.
-
-        Args:
-            conversation_id: ID of the conversation
-
-        Returns:
-            List of messages
-        """
         conversation = self.load_conversation(conversation_id)
         if conversation:
             return conversation.messages
         return []
 
     def rename_conversation(self, conversation_id: str, new_title: str) -> bool:
-        """
-        Rename a conversation.
-
-        Args:
-            conversation_id: ID of the conversation
-            new_title: New title for the conversation
-
-        Returns:
-            True if renamed successfully
-        """
         conversation = self.load_conversation(conversation_id)
         if conversation:
             conversation.title = new_title
@@ -249,28 +170,15 @@ class ConversationManager:
         return False
 
     def get_current_conversation(self) -> Optional[Conversation]:
-        """Get the current active conversation."""
         return self.current_conversation
 
     def set_current_conversation(self, conversation: Conversation):
-        """Set the current active conversation."""
         self.current_conversation = conversation
 
     def clear_current_conversation(self):
-        """Clear the current conversation reference."""
         self.current_conversation = None
 
     def export_conversation(self, conversation_id: str, format: str = "txt") -> Optional[str]:
-        """
-        Export a conversation to a string.
-
-        Args:
-            conversation_id: ID of the conversation to export
-            format: Export format ("txt", "json", "md")
-
-        Returns:
-            Exported conversation as string
-        """
         conversation = self.load_conversation(conversation_id)
         if not conversation:
             return None
@@ -301,15 +209,6 @@ _default_manager = None
 
 
 def get_conversation_manager(storage_path: str = None) -> ConversationManager:
-    """
-    Get or create the default Conversation Manager.
-
-    Args:
-        storage_path: Optional custom storage path
-
-    Returns:
-        ConversationManager instance
-    """
     global _default_manager
 
     if _default_manager is None:
@@ -319,6 +218,5 @@ def get_conversation_manager(storage_path: str = None) -> ConversationManager:
 
 
 def reset_conversation_manager():
-    """Reset the default manager (useful for testing)."""
     global _default_manager
     _default_manager = None

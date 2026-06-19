@@ -1,6 +1,3 @@
-"""
-Utility helpers for Lithium IDE.
-"""
 
 import subprocess
 import sys
@@ -9,56 +6,28 @@ import shutil
 
 
 def resource_path(relative_path: str) -> str:
-    """
-    Get the absolute path to a resource, compatible with PyInstaller bundles.
-
-    When running from a PyInstaller --onefile bundle, files are extracted to
-    a temporary folder referenced by sys._MEIPASS. When running from source,
-    the path is resolved relative to the project root.
-
-    Args:
-        relative_path: Path relative to the project root (e.g. "src/assets/icon.png")
-
-    Returns:
-        Absolute path to the resource.
-    """
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        # Running inside a PyInstaller bundle
+        
         base_path = sys._MEIPASS
     else:
-        # Running from source — project root is one level above 'src/'
+        
         base_path = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
     return os.path.join(base_path, relative_path)
 
 
 def get_python_executable() -> str:
-    """
-    Return the path to the real Python interpreter.
-
-    When running inside a PyInstaller bundle, ``sys.executable`` points to the
-    frozen ``.exe`` (e.g. ``Lithium.exe``), **not** to ``python.exe``.
-    Spawning ``[sys.executable, "-m", "pip", ...]`` in that case would
-    re-launch the IDE instead of running pip.
-
-    This helper detects the frozen state and searches for a real Python
-    interpreter on the system PATH.
-
-    Returns:
-        Absolute path to ``python.exe`` (or equivalent), or ``sys.executable``
-        when running from source.
-    """
     if not getattr(sys, "frozen", False):
-        # Running from source — sys.executable is the real interpreter
+        
         return sys.executable
 
-    # --- Frozen / PyInstaller build ---
-    # Try common interpreter names on PATH (including the Windows py launcher)
+    
+    
     for name in ("py", "python3", "python"):
         found = shutil.which(name)
         if found:
             return found
 
-    # Fallback: look in common Windows install locations
+    
     if sys.platform == "win32":
         import glob
         patterns = [
@@ -71,7 +40,7 @@ def get_python_executable() -> str:
             if matches:
                 return matches[0]
 
-    # Last resort — return "python" and let subprocess raise if missing
+    
     return "python"
 
 
@@ -82,13 +51,6 @@ def _subprocess_creationflags():
 
 
 def can_import_module(module_name: str) -> bool:
-    """
-    Return True if *module_name* can be imported in the current runtime.
-
-    When running from a PyInstaller bundle, packages installed via pip into
-    the system Python are not visible to in-process imports. In that case
-    this helper falls back to asking the external interpreter.
-    """
     try:
         __import__(module_name)
         return True
@@ -115,11 +77,6 @@ _external_site_packages_applied = False
 
 
 def register_package_dll_dirs(package_name: str) -> None:
-    """
-    Register native library directories for *package_name* on Windows so
-    extension modules loaded from external site-packages can resolve DLLs
-    when running inside a PyInstaller bundle.
-    """
     if not hasattr(os, "add_dll_directory"):
         return
 
@@ -140,10 +97,6 @@ def register_package_dll_dirs(package_name: str) -> None:
 
 
 def extend_path_with_external_site_packages() -> None:
-    """
-    When frozen, prepend the external Python site-packages directories to
-    ``sys.path`` so pip-installed packages become importable in-process.
-    """
     global _external_site_packages_applied
     if _external_site_packages_applied or not getattr(sys, "frozen", False):
         return
@@ -178,7 +131,6 @@ def extend_path_with_external_site_packages() -> None:
 
 
 def prepare_frozen_python_runtime() -> None:
-    """Make pip-installed packages visible when running as a PyInstaller binary."""
     if getattr(sys, "frozen", False):
         extend_path_with_external_site_packages()
         register_package_dll_dirs("llama_cpp")

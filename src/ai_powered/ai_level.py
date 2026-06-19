@@ -19,10 +19,10 @@ DEFAULT_MODEL_URL = (
     "resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf"
 )
 
-# RAM upper bounds (GB) for each level except Ultra-High (64 GB+).
+
 _RAM_THRESHOLDS_GB = [4, 8, 12, 16, 24, 63]
 
-# Effective billions = how much of the 7B model capacity is used at each level.
+
 LEVEL_CONFIG = {
     "Ultra-Low": {
         "billions": 1,
@@ -98,7 +98,6 @@ LEVEL_CONFIG = {
 
 
 def get_system_ram_gb():
-    """Return total physical RAM in gigabytes, or None if detection fails."""
     try:
         if sys.platform == "win32":
             class MEMORYSTATUSEX(ctypes.Structure):
@@ -144,7 +143,6 @@ def get_system_ram_gb():
 
 
 def detect_ai_level_from_ram(ram_gb=None):
-    """Map installed RAM to an AI strength tier."""
     if ram_gb is None:
         ram_gb = get_system_ram_gb()
     if ram_gb is None:
