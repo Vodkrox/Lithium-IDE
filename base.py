@@ -1600,6 +1600,11 @@ Example prompts:
                 0, lambda: self.status_label.config(text=f"AI Skills: {message}")
             )
 
+        def on_filesystem_change():
+            """Refresh the file explorer when AI creates or deletes files."""
+            if hasattr(self, "file_explorer") and self.file_explorer:
+                self.root.after(100, self.file_explorer.refresh)
+
         try:
             self.ai_skills_executor = get_ai_skills_executor(
                 editor_getter=get_editor_content,
@@ -1607,6 +1612,7 @@ Example prompts:
                 file_path_getter=get_file_path,
                 project_folder_getter=get_project_folder,
                 status_callback=status_update,
+                on_filesystem_change=on_filesystem_change,
             )
             self._refresh_ai_system_prompt()
         except Exception as e:
