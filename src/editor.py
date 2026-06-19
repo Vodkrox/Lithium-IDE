@@ -19,6 +19,9 @@ class LithiumEditorController:
         self.has_unsaved_changes = False
         self.settings_manager = settings_manager or SettingsManager()
 
+    def _get_editor_content(self):
+        return self.editor.get("1.0", "end-1c")
+
     def update_line_numbers(self, event=None):
         self.line_numbers.config(state=tk.NORMAL)
         self.line_numbers.delete(1.0, tk.END)
@@ -108,7 +111,7 @@ class LithiumEditorController:
         if self.file_path:
             try:
                 with open(self.file_path, "w", encoding="utf-8") as file:
-                    file.write(self.editor.get(1.0, tk.END))
+                    file.write(self._get_editor_content())
                 self.has_unsaved_changes = False
                 self.editor.edit_modified(False)
                 self.update_title()
@@ -131,7 +134,7 @@ class LithiumEditorController:
         if path:
             self.file_path = path
             with open(self.file_path, "w", encoding="utf-8") as file:
-                file.write(self.editor.get(1.0, tk.END))
+                file.write(self._get_editor_content())
             self.has_unsaved_changes = False
             self.editor.edit_modified(False)
             self.root.title(f"{os.path.basename(path)} - Lithium IDE")

@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import urllib.request
 from urllib.parse import urlparse
 
@@ -24,6 +25,7 @@ def get_models_dir():
     return os.path.join(_get_appdata_dir(), "models")
 
 _model_cache = {}
+_model_cache_lock = threading.Lock()
 
 MODEL_CANDIDATES = [get_default_model()]
 
@@ -252,7 +254,17 @@ def download_model_url(url, progress_callback=None):
 
 def clear_model_cache():
     """Unload cached llama-cpp / transformers models."""
-    _model_cache.clear()
+    with _model_cache_lock:
+        _model_cache.clear()
+
+
+def _get_cached_model(cache_key, factory):
+    with _model_cache_lock:
+        cached_model = _model_cache.get(cache_key)
+        if cached_model is None:
+            cached_model = factory()
+            _model_cache[cache_key] = cached_model
+        return cached_model
 
 
 def list_model_candidates():
@@ -394,7 +406,8 @@ def _generate_with_llama_cpp(
         raise RuntimeError("The llama-cpp backend is not installed.")
 
     cache_key = (model_path, n_ctx, n_batch, n_threads)
-    if cache_key not in _model_cache:
+
+    def create_llama():
         llama_kwargs = {
             "model_path": model_path,
             "n_ctx": n_ctx,
@@ -403,9 +416,9 @@ def _generate_with_llama_cpp(
         }
         if n_threads is not None:
             llama_kwargs["n_threads"] = n_threads
-        _model_cache[cache_key] = Llama(**llama_kwargs)
+        return Llama(**llama_kwargs)
 
-    llm = _model_cache[cache_key]
+    llm = _get_cached_model(cache_key, create_llama)
     response = llm(
         prompt=prompt,
         max_tokens=max_tokens,
@@ -424,18 +437,18 @@ def _generate_with_transformers(model_path, prompt, max_tokens=256):
         raise RuntimeError("The transformers/torch libraries are not installed.")
 
     torch, AutoModelForCausalLM, AutoTokenizer = impl
-    if model_path not in _model_cache:
+
+    def create_transformers_model():
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
             trust_remote_code=True,
             device_map="auto",
-            torch_dtype=\
-                None,
+            torch_dtype="auto",
         )
-        _model_cache[model_path] = (tokenizer, model)
+        return tokenizer, model
 
-    tokenizer, model = _model_cache[model_path]
+    tokenizer, model = _get_cached_model(model_path, create_transformers_model)
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids
     try:
         import torch as _torch
@@ -524,5 +537,4 @@ def generate_text_from_model(
                 "Install them or download a GGUF model (.gguf) to use with llama-cpp-python."
             )
         return _generate_with_transformers(resolved_source, prompt_text, max_tokens=max_tokens)
-
 

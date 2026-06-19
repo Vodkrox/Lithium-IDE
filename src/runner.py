@@ -43,10 +43,12 @@ def run_code(file_path, console_widget, on_complete=None):
         console_widget.config(state=tk.DISABLED)
 
     def worker():
+        process = None
         try:
             python_executable = get_python_executable()
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
+            working_directory = os.path.dirname(os.path.abspath(file_path)) or None
             process = subprocess.Popen(
                 [python_executable, "-u", file_path],
                 stdout=subprocess.PIPE,
@@ -54,15 +56,17 @@ def run_code(file_path, console_widget, on_complete=None):
                 text=True,
                 bufsize=1,
                 env=env,
+                cwd=working_directory,
                 shell=False
             )
-
-            if process.stdout is None:
-                return
-
             _set_current_process(process)
-            for line in process.stdout:
-                console_widget.after(0, append_output, line)
+
+            if process.stdout is not None:
+                try:
+                    for line in process.stdout:
+                        console_widget.after(0, append_output, line)
+                finally:
+                    process.stdout.close()
 
             process.wait()
         except Exception as e:
