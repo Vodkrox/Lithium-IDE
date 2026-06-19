@@ -196,6 +196,8 @@ class LithiumIDE:
         def on_editor_scroll(*args):
             self.editor_scrollbar.set(*args)
             self.line_numbers.yview_moveto(args[0])
+            if hasattr(self, "syntax_highlighter"):
+                self.syntax_highlighter.schedule_highlight()
 
         self.editor.config(yscrollcommand=on_editor_scroll)
 

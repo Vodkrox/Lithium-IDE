@@ -70,7 +70,6 @@ class LithiumEditorController:
             self.has_unsaved_changes = True
             self.update_title()
             self._notify_dirty_state()
-        self.editor.edit_modified(False)
 
     def mark_clean(self):
         if self.has_unsaved_changes:
