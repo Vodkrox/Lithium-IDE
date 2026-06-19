@@ -15,6 +15,7 @@ import pytest
 from src.ai_powered.ai_engine import (
     DEFAULT_SYSTEM_PROMPT,
     _get_appdata_dir,
+    _fit_prompt_to_context,
     _normalize_source,
     _subprocess_creationflags,
     clear_model_cache,
@@ -185,6 +186,33 @@ class TestDefaultSystemPrompt:
 
     def test_is_reasonably_long(self):
         assert len(DEFAULT_SYSTEM_PROMPT) > 100
+
+
+# =========================================================================
+# _fit_prompt_to_context
+# =========================================================================
+
+
+class TestFitPromptToContext:
+    def test_short_prompt_remains_unchanged(self):
+        system_prompt = "system"
+        user_prompt = "user"
+        sys_out, user_out, max_tokens = _fit_prompt_to_context(
+            system_prompt, user_prompt, max_tokens=64, n_ctx=512
+        )
+        assert sys_out == system_prompt
+        assert user_out == user_prompt
+        assert max_tokens == 64
+
+    def test_long_prompt_is_trimmed(self):
+        system_prompt = "system"
+        user_prompt = "x" * 20000
+        _, user_out, max_tokens = _fit_prompt_to_context(
+            system_prompt, user_prompt, max_tokens=1536, n_ctx=4096
+        )
+        assert "trimmed to fit the model context window" in user_out
+        assert len(user_out) < len(user_prompt)
+        assert max_tokens < 1536
 
 
 # =========================================================================

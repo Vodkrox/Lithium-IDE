@@ -104,6 +104,16 @@ class AISkillSettings:
         else:
             parts.append("You may only view and modify the currently open file.")
 
+        parts.append(
+            "Before reading files, decide which files are actually relevant and keep context minimal. "
+            "Prefer the smallest useful set of files, read nearby code instead of whole directories, "
+            "and summarize older or unrelated material instead of saturating the context window."
+        )
+        parts.append(
+            "When a task does not require more context, work from the open file plus only the immediate callers, "
+            "definitions, and neighboring tests that affect the behavior being changed."
+        )
+
         if self.get("reasoning"):
             parts.append(
                 "You MUST reason step by step before giving your final answer. "

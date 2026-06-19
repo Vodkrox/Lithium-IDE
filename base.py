@@ -357,6 +357,10 @@ class LithiumIDE:
             self.status_label.config(text=f"AI: configured model {self.ai_model_link}")
 
         self._update_ai_level_display()
+         
+        # Preload model in background for faster first query
+        if self.ai_model_link:
+            self.root.after(1500, self._preload_model_in_background)
 
         self.btn_theme = tk.Button(
             self.toolbar,
@@ -1489,7 +1493,7 @@ Example prompts:
         )
         menu.post(x, y)
 
-    def _collect_workspace_files(self, max_files=150):
+    def _collect_workspace_files(self, max_files=40):
         folder = None
         if hasattr(self, "file_explorer") and self.file_explorer:
             folder = self.file_explorer.current_folder
@@ -1512,6 +1516,229 @@ Example prompts:
                 if len(collected) >= max_files:
                     return collected
         return collected
+
+    def _collect_workspace_tree_summary(self, max_depth=2, max_items=120):
+        folder = None
+        if hasattr(self, "file_explorer") and self.file_explorer:
+            folder = self.file_explorer.current_folder
+        if not folder or not os.path.isdir(folder):
+            return ""
+
+        skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv", ".models"}
+        lines = []
+        item_count = 0
+        truncated = False
+
+        def visible_entries(path):
+            try:
+                entries = sorted(
+                    os.listdir(path),
+                    key=lambda name: (not os.path.isdir(os.path.join(path, name)), name.lower()),
+                )
+            except PermissionError:
+                return [], []
+
+            dirs = []
+            files = []
+            for name in entries:
+                if name.startswith(".") or name in skip_dirs:
+                    continue
+                full_path = os.path.join(path, name)
+                if os.path.isdir(full_path):
+                    dirs.append(name)
+                else:
+                    files.append(name)
+            return dirs, files
+
+        def walk(path, depth=0, label=None):
+            nonlocal item_count, truncated
+
+            dirs, files = visible_entries(path)
+            indent = "  " * depth
+            name = label or os.path.basename(path.rstrip(os.sep)) or path
+
+            if depth == 0:
+                lines.append(f"{name}/")
+            else:
+                lines.append(
+                    f"{indent}- {name}/ ({len(files)} files, {len(dirs)} folders)"
+                )
+
+            item_count += 1
+            if item_count >= max_items:
+                truncated = True
+                return
+
+            if files:
+                preview = ", ".join(files[:8])
+                if len(files) > 8:
+                    preview += f", ... (+{len(files) - 8} more)"
+                lines.append(f"{indent}  files: {preview}")
+                item_count += 1
+                if item_count >= max_items:
+                    truncated = True
+                    return
+
+            if depth + 1 >= max_depth:
+                return
+
+            for child in dirs:
+                if item_count >= max_items:
+                    truncated = True
+                    return
+                walk(os.path.join(path, child), depth + 1, child)
+
+        walk(folder)
+        if truncated:
+            lines.append("... (summary truncated)")
+        return "\n".join(lines)
+
+    def _should_use_workspace_tree_summary(self, user_message):
+        text = (user_message or "").lower()
+        return any(
+            phrase in text
+            for phrase in (
+                "explain this folder",
+                "explain folder",
+                "carpeta",
+                "folder overview",
+                "folder structure",
+                "directory structure",
+                "project structure",
+                "tree",
+                "estructura",
+            )
+        )
+
+    def _set_ai_reading_status(self, file_label, start_line, end_line):
+        message = f"Reading {file_label} >> L{start_line} - L{end_line}"
+        status_label = getattr(self, "status_label", None)
+        root = getattr(self, "root", None)
+        if root and hasattr(root, "after"):
+            root.after(0, lambda: status_label.config(text=message))
+        elif status_label is not None:
+            status_label.config(text=message)
+
+    def _read_file_excerpt(self, absolute_path, start_line=1, end_line=40):
+        if not absolute_path or not os.path.isfile(absolute_path):
+            return "", start_line, start_line
+
+        try:
+            with open(absolute_path, "r", encoding="utf-8") as handle:
+                lines = handle.readlines()
+        except UnicodeDecodeError:
+            with open(absolute_path, "r", encoding="utf-8", errors="ignore") as handle:
+                lines = handle.readlines()
+        except Exception:
+            return "", start_line, start_line
+
+        total_lines = len(lines)
+        if total_lines == 0:
+            return "", start_line, start_line
+
+        start_index = max(0, start_line - 1)
+        end_index = min(end_line, total_lines)
+        excerpt = "".join(lines[start_index:end_index]).rstrip()
+        return excerpt, start_index + 1, end_index
+
+    def _collect_workspace_excerpts(self, max_files=8):
+        folder = None
+        if hasattr(self, "file_explorer") and self.file_explorer:
+            folder = self.file_explorer.current_folder
+        if not folder or not os.path.isdir(folder):
+            return []
+
+        preferred_names = (
+            "README.md",
+            "README.txt",
+            "requirements.txt",
+            "pyproject.toml",
+            "setup.py",
+            "base.py",
+            "strip_comments.py",
+        )
+        preferred_paths = []
+        for name in preferred_names:
+            candidate = os.path.join(folder, name)
+            if os.path.isfile(candidate):
+                preferred_paths.append(candidate)
+
+        discovered = []
+        for rel_path in self._collect_workspace_files(max_files=max_files * 2):
+            abs_path = os.path.join(folder, rel_path)
+            if os.path.isfile(abs_path):
+                discovered.append(abs_path)
+
+        chosen = []
+        seen = set()
+        for path in preferred_paths + discovered:
+            normalized = os.path.normpath(path)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            chosen.append(path)
+            if len(chosen) >= max_files:
+                break
+
+        excerpts = []
+        for absolute_path in chosen:
+            rel_path = os.path.relpath(absolute_path, folder).replace("\\", "/")
+            ext = os.path.splitext(rel_path)[1].lower()
+            max_line = 80 if ext in {".md", ".txt", ".toml", ".json", ".yml", ".yaml"} else 60
+            self._set_ai_reading_status(rel_path, 1, max_line)
+            text, start_line, end_line = self._read_file_excerpt(
+                absolute_path, 1, max_line
+            )
+            if text:
+                excerpts.append(
+                    {
+                        "path": rel_path,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "content": text,
+                    }
+                )
+
+        return excerpts
+
+    def _build_ai_folder_explanation_prompt(self, user_message):
+        folder = None
+        if hasattr(self, "file_explorer") and self.file_explorer:
+            folder = self.file_explorer.current_folder
+
+        tree_summary = self._collect_workspace_tree_summary(max_depth=3, max_items=120)
+        if not tree_summary:
+            tree_summary = "(No folder tree is available.)"
+
+        excerpts = self._collect_workspace_excerpts(max_files=8)
+        excerpt_block = ""
+        if excerpts:
+            formatted = []
+            for item in excerpts:
+                formatted.append(
+                    f"{item['path']} (L{item['start_line']}-L{item['end_line']})\n{item['content']}"
+                )
+            excerpt_block = "\n\nSelective file excerpts:\n" + "\n\n".join(formatted)
+
+        return f"""TASK
+User request:
+{user_message}
+
+Current folder:
+{folder or 'No folder open'}
+
+Folder tree summary:
+{tree_summary}
+{excerpt_block}
+
+OUTPUT CONTRACT
+- Answer in plain language only.
+- Do not use code-edit XML or skill tags.
+- Do not describe files as code edits.
+- Explain the folder structure clearly and concisely.
+- Mention the main purpose of each top-level folder and the most relevant files you can see.
+- If the folder is large, summarize the structure instead of listing every file.
+"""
 
     def _notify_ai_task_complete(self):
         if not self.ai_skill_settings.get("notify_on_complete"):
@@ -1619,6 +1846,42 @@ Example prompts:
             print(f"Warning: Could not initialize AI Skills: {e}")
             self.ai_skills_executor = None
 
+    def _preload_model_in_background(self):
+        """Preload the AI model in a background thread to speed up first query."""
+        if not self.ai_model_link or not self._is_ai_model_ready():
+            return
+         
+        def preload():
+            try:
+                self.root.after(
+                    0,
+                    lambda: self.status_label.config(text="AI: Preloading model..."),
+                )
+                 
+                # Preload model using optimized preload function
+                ai_runner.preload_model(
+                    self.ai_model_link,
+                    n_ctx=self.ai_inference_params.get("n_ctx", 8192),
+                    n_batch=self.ai_inference_params.get("n_batch", 512),
+                    n_threads=self.ai_inference_params.get("n_threads"),
+                )
+                 
+                self.root.after(
+                    0,
+                    lambda: self.status_label.config(text="AI: Ready"),
+                )
+            except Exception as e:
+                print(f"[AI Engine] Background model preload failed: {e}")
+                # Don't show error to user, just continue normally
+                self.root.after(
+                    0,
+                    lambda: self.status_label.config(text="AI: Ready"),
+                )
+         
+        preload_thread = threading.Thread(target=preload, daemon=True)
+        preload_thread.start()
+
+
     def toggle_ai_chat(self):
         if self.chat_visible:
             self.center_right_paned.remove(self.chat_frame)
@@ -1698,39 +1961,68 @@ Example prompts:
         self.status_label.config(text="AI: Stopped")
         self.append_to_chat_history("System", "Response stopped by user")
 
-    def _build_ai_editor_prompt(self, user_message):
+    def _build_ai_editor_prompt(self, user_message, chat_only=False):
         """Build an AI prompt that includes the current file content with line numbers.
 
         The AI needs this context so it can decide whether it must delete, replace,
         or add lines before proposing changes. Without the numbered file snapshot,
         the model tends to append code blindly instead of repairing invalid code.
         """
+        if self._should_use_workspace_tree_summary(user_message):
+            return self._build_ai_folder_explanation_prompt(user_message)
+
         file_path = self.controller.file_path or "Untitled"
         language = self.selected_lang.get()
         content = self.editor.get("1.0", "end-1c")
-        numbered_lines = content.splitlines()
-
-        if numbered_lines:
-            numbered_content = "\n".join(
-                f"{line_number}: {line}"
-                for line_number, line in enumerate(numbered_lines, start=1)
-            )
-        else:
-            numbered_content = "(empty file)"
+        numbered_content, context_notice = self._build_compact_numbered_content(content)
 
         workspace_section = ""
         if self.ai_skill_settings.is_workspace_scope():
-            project_files = self._collect_workspace_files()
-            if project_files:
-                file_list = "\n".join(f"- {path}" for path in project_files)
-                workspace_section = f"""
+            if self._should_use_workspace_tree_summary(user_message):
+                tree_summary = self._collect_workspace_tree_summary()
+                if tree_summary:
+                    workspace_section = f"""
+Project scope: you may modify files anywhere under the opened folder tree.
+Workspace tree summary:
+{tree_summary}
+"""
+                else:
+                    workspace_section = """
+Project scope: you may modify files anywhere under the opened folder tree.
+"""
+            else:
+                project_files = self._collect_workspace_files(max_files=20)
+                if project_files:
+                    file_list = "\n".join(f"- {path}" for path in project_files)
+                    workspace_section = f"""
 Project scope: you may modify files anywhere under the opened folder tree.
 Project files (relative paths):
 {file_list}
 """
-            else:
-                workspace_section = """
+                else:
+                    workspace_section = """
 Project scope: you may modify files anywhere under the opened folder tree.
+"""
+
+        if chat_only:
+            return f"""TASK
+User request:
+{user_message}
+
+Current file path: {file_path}
+Current language: {language}
+
+Current open file content with line numbers:
+```text
+{numbered_content}
+```
+{context_notice}
+{workspace_section}
+OUTPUT CONTRACT
+- Answer in plain language directly in chat.
+- Do NOT use <skill> XML tags.
+- Do NOT modify files.
+- Explain clearly what the file does, its structure, and key functions relevant to the user's question.
 """
 
         reasoning_instruction = ""
@@ -1787,6 +2079,7 @@ Current open file content with line numbers:
 ```text
 {numbered_content}
 ```
+{context_notice}
 {workspace_section}
 OUTPUT CONTRACT
 {reasoning_instruction}{edit_output_rule}
@@ -1799,6 +2092,99 @@ For example, if line 1 is invalid plain text and the user asks for Python hello 
 <skill name="delete_lines"><parameter name="line">1</parameter><parameter name="count">1</parameter></skill>
 <skill name="add_lines"><parameter name="line">1</parameter><parameter name="content">print("Hello, world!")</parameter></skill>
 """
+
+    def _is_chat_only_request(self, user_message):
+        """Return True when the request is explanatory/chat-only and should not edit files."""
+        text = (user_message or "").strip().lower()
+        if not text:
+            return False
+
+        chat_markers = (
+            "que hace este archivo",
+            "qué hace este archivo",
+            "explica este archivo",
+            "explain this file",
+            "what does this file do",
+            "solo explica",
+            "solo explicar",
+            "only explain",
+            "just explain",
+            "resumen",
+            "summary",
+        )
+
+        edit_markers = (
+            "agrega",
+            "añade",
+            "modifica",
+            "edita",
+            "cambia",
+            "borra",
+            "elimina",
+            "create",
+            "add ",
+            "edit ",
+            "modify",
+            "delete",
+            "replace",
+            "refactor",
+            "implement",
+            "fix",
+        )
+
+        if any(marker in text for marker in chat_markers):
+            return True
+        if any(marker in text for marker in edit_markers):
+            return False
+        return text.endswith("?") or text.startswith("¿")
+
+    def _build_compact_numbered_content(self, content, max_lines=240, max_chars=22000):
+        """Return a bounded, line-numbered file snapshot for fast prompt evaluation."""
+        lines = content.splitlines()
+        if not lines:
+            return "(empty file)", ""
+
+        if len(lines) <= max_lines:
+            numbered = "\n".join(
+                f"{line_number}: {line}"
+                for line_number, line in enumerate(lines, start=1)
+            )
+            if len(numbered) <= max_chars:
+                return numbered, ""
+
+        head_count = max(1, max_lines // 2)
+        tail_count = max(1, max_lines - head_count)
+
+        head_lines = [
+            f"{line_number}: {line}"
+            for line_number, line in enumerate(lines[:head_count], start=1)
+        ]
+        tail_start = max(head_count, len(lines) - tail_count)
+        tail_lines = [
+            f"{line_number}: {line}"
+            for line_number, line in enumerate(lines[tail_start:], start=tail_start + 1)
+        ]
+
+        omitted_lines = max(0, len(lines) - head_count - len(tail_lines))
+        sections = list(head_lines)
+        if omitted_lines > 0:
+            sections.append(f"... [{omitted_lines} lines omitted to speed up response] ...")
+        sections.extend(tail_lines)
+
+        numbered = "\n".join(sections)
+        if len(numbered) > max_chars:
+            half = max_chars // 2
+            numbered = (
+                numbered[:half]
+                + "\n... [middle content omitted to fit prompt budget] ...\n"
+                + numbered[-half:]
+            )
+
+        notice = (
+            "Note: file context was trimmed for lower latency. "
+            "Use visible line numbers for edits and avoid changing omitted regions unless needed."
+        )
+        return numbered, notice
 
     def _looks_like_broken_ai_edit_response(self, response):
         """Detect meta/prompt-leak responses that cannot drive Lithium skills."""
@@ -1959,8 +2345,6 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         """Check if streaming generation is possible with current setup."""
         if not getattr(self, "ai_model_link", None):
             return False
-        if not self.ai_skill_settings.get("reasoning"):
-            return False
         # Check if it's a GGUF model (llama.cpp supports streaming)
         try:
             resolved = ai_runner.resolve_model_source(self.ai_model_link)
@@ -1975,15 +2359,15 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         except Exception:
             return False
 
-    def _stream_ai_response(self, prompt):
-        """Run AI with streaming, showing reasoning tokens in real-time."""
-        self.root.after(0, lambda: self.status_label.config(text="AI: Reasoning..."))
+    def _stream_ai_response(self, prompt, chat_only=False):
+        """Run AI with streaming, showing response tokens in real-time."""
+        self.root.after(0, lambda: self.status_label.config(text="AI: Generating..."))
 
         # Show the standard loading indicator immediately so there's visual feedback
         # NOTE: Must use root.after() because we're in a worker thread
         self.root.after(0, self._show_loading_indicator)
 
-        editor_prompt = self._build_ai_editor_prompt(prompt)
+        editor_prompt = self._build_ai_editor_prompt(prompt, chat_only=chat_only)
         inference_params = dict(self.ai_inference_params)
         base_tokens = inference_params.get("max_tokens", 768)
         inference_params["max_tokens"] = int(base_tokens * 1.35)
@@ -1995,6 +2379,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             "response": "",
             "has_think_tag": False,
             "reasoning_done": False,
+            "chat_only": chat_only,
             "done": False,
             "error": None,
         }
@@ -2002,6 +2387,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
 
         # --- Create reasoning widget only when <think> is first detected ---
         reasoning_created = [False]
+        response_created = [False]
 
         def create_reasoning_widget():
             """Create the collapsible '💭 Show reasoning' live widget (main thread)."""
@@ -2076,6 +2462,53 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             self._stream_reasoning_visible = visible
             self._stream_reasoning_toggle = toggle_btn
 
+        def create_response_widget():
+            """Create a live-updating response widget while tokens stream in."""
+            if response_created[0]:
+                return
+            response_created[0] = True
+
+            self.chat_history.config(state=tk.NORMAL)
+            bg = theme.COLORS.get("bg_editor", "#080808")
+            bg_dark = theme.COLORS.get("bg_dark", "#000000")
+            fg = theme.COLORS.get("fg_light", "#D8DEE9")
+            accent = theme.COLORS.get("accent", "#cba6f7")
+
+            frame = tk.Frame(self.chat_history, bg=bg)
+            header = tk.Label(
+                frame,
+                text="AI (live):",
+                font=("DejaVu Sans", 10, "bold"),
+                fg=accent,
+                bg=bg,
+                anchor="w",
+            )
+            header.pack(fill=tk.X, padx=2, pady=(0, 2))
+
+            widget = tk.Text(
+                frame,
+                wrap=tk.WORD,
+                font=theme.FONTS.get("ui", ("DejaVu Sans", 10)),
+                fg=fg,
+                bg=bg_dark,
+                bd=0,
+                highlightthickness=0,
+                height=3,
+                padx=8,
+                pady=6,
+                relief=tk.FLAT,
+            )
+            widget.pack(fill=tk.X, padx=2, pady=(0, 6))
+            widget.config(state=tk.DISABLED)
+
+            self.chat_history.window_create(tk.END, window=frame)
+            self.chat_history.insert(tk.END, "\n")
+            self.chat_history.see(tk.END)
+            self.chat_history.config(state=tk.DISABLED)
+
+            self._stream_response_widget = widget
+            self._stream_response_frame = frame
+
         auto_expanded = [False]
 
         def update_reasoning_widget(text):
@@ -2107,6 +2540,22 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             except Exception:
                 pass
 
+        def update_response_widget(text):
+            """Update the live response widget as tokens arrive."""
+            if not response_created[0]:
+                return
+            try:
+                w = self._stream_response_widget
+                w.config(state=tk.NORMAL)
+                w.delete("1.0", tk.END)
+                w.insert("1.0", text)
+                w.config(state=tk.DISABLED)
+                w.see(tk.END)
+                lines = text.count("\n") + 1
+                w.config(height=min(max(lines, 3), 20))
+            except Exception:
+                pass
+
         # --- Periodic UI update (main thread) ---
         def poll_ui():
             with state_lock:
@@ -2121,6 +2570,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                     return
 
                 reasoning = state["reasoning"]
+                response = state["response"]
                 done = state["done"]
 
             # Create reasoning widget on first detection of <think>
@@ -2131,8 +2581,14 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             if reasoning and reasoning_created[0]:
                 update_reasoning_widget(reasoning)
 
+            # Live-update assistant output widget
+            if response and not response_created[0]:
+                self.root.after(0, create_response_widget)
+            if response and response_created[0]:
+                update_response_widget(response)
+
             if not done:
-                self.root.after(100, poll_ui)
+                self.root.after(50, poll_ui)
             else:
                 self._finalize_stream_response(state, state_lock)
 
@@ -2207,6 +2663,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             reasoning_text = state["reasoning"]
             full_response = state["response"]
             full_buffer = state["full_buffer"]
+            chat_only = state.get("chat_only", False)
             error = state["error"]
 
         self._remove_loading_indicator()
@@ -2233,7 +2690,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         skill_results = []
         pending_approvals = []
         clean_response = full_response
-        if self.ai_skills_executor:
+        if self.ai_skills_executor and not chat_only:
             try:
                 skill_results = self.ai_skills_executor.parse_for_preview(full_response)
                 clean_response = self.ai_skills_executor.get_clean_response(
@@ -2244,6 +2701,11 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                         pending_approvals.append((i, sn, result))
             except Exception as skill_err:
                 print(f"Warning: Error processing AI skills: {skill_err}")
+        elif self.ai_skills_executor and chat_only:
+            try:
+                clean_response = self.ai_skills_executor.get_clean_response(full_response)
+            except Exception:
+                clean_response = full_response
 
         # Save original content before applying any changes
         original_content = self.editor.get("1.0", tk.END) if pending_approvals else None
@@ -2266,6 +2728,8 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
 
         # Show skill results in chat
         for sn, result in skill_results:
+            if sn == "respond_in_chat":
+                continue
             icon = "✓" if result.success else "✗"
             self.append_to_chat_history("Skill", f"{icon} {result.message}")
 
@@ -2293,6 +2757,8 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             "_stream_reasoning_widget",
             "_stream_reasoning_frame",
             "_stream_reasoning_toggle",
+            "_stream_response_widget",
+            "_stream_response_frame",
         ):
             if hasattr(self, attr):
                 try:
@@ -2307,10 +2773,12 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                 delattr(self, attr)
 
     def run_chat_ai(self, prompt, is_retry=False):
-        # Use streaming path when reasoning skill is active and possible
+        chat_only = self._is_chat_only_request(prompt)
+
+        # Use streaming path whenever the runtime supports it
         if not is_retry and self._can_stream():
             try:
-                self._stream_ai_response(prompt)
+                self._stream_ai_response(prompt, chat_only=chat_only)
                 return
             except Exception as stream_err:
                 print(f"Streaming failed, falling back to normal mode: {stream_err}")
@@ -2326,7 +2794,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             self._pending_retry_info = (prompt, 0)
 
         try:
-            editor_prompt = self._build_ai_editor_prompt(prompt)
+            editor_prompt = self._build_ai_editor_prompt(prompt, chat_only=chat_only)
             inference_params = dict(self.ai_inference_params)
             if self.ai_skill_settings.get("reasoning"):
                 base_tokens = inference_params.get("max_tokens", 768)
@@ -2371,9 +2839,10 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                 self.root.after(0, lambda: self.status_label.config(text="AI: Stopped"))
                 return
 
-            response = self._retry_if_broken_ai_edit_response(
-                prompt, editor_prompt, response
-            )
+            if not chat_only:
+                response = self._retry_if_broken_ai_edit_response(
+                    prompt, editor_prompt, response
+                )
 
             # Extract reasoning before skill processing
             reasoning_text, response_no_reasoning = self._extract_reasoning(response)
@@ -2384,7 +2853,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             skill_results = []
             pending_approvals = []
             clean_response = response_no_reasoning
-            if self.ai_skills_executor:
+            if self.ai_skills_executor and not chat_only:
                 try:
                     skill_results = self.ai_skills_executor.parse_for_preview(
                         response_no_reasoning
@@ -2398,6 +2867,13 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                             pending_approvals.append((i, skill_name, result))
                 except Exception as skill_err:
                     print(f"Warning: Error processing AI skills: {skill_err}")
+            elif self.ai_skills_executor and chat_only:
+                try:
+                    clean_response = self.ai_skills_executor.get_clean_response(
+                        response_no_reasoning
+                    )
+                except Exception:
+                    clean_response = response_no_reasoning
 
             # Save original content before applying any changes
             original_content = (
@@ -2426,6 +2902,8 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                     self.conversation_manager.save_conversation()
 
                 for skill_name, result in skill_results:
+                    if skill_name == "respond_in_chat":
+                        continue
                     status_icon = "✓" if result.success else "✗"
                     self.append_to_chat_history(
                         "Skill", f"{status_icon} {result.message}"
@@ -3007,7 +3485,10 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                 self.chat_history.window_create(tk.END, window=btn_frame)
                 self.chat_history.insert(tk.END, "\n")
             else:
-                self.chat_history.insert(tk.END, part)
+                if sender == "AI":
+                    self._insert_markdown_text(part)
+                else:
+                    self.chat_history.insert(tk.END, part)
 
         # Add Reject button after AI responses (not errors, skills, or system msgs)
         if sender == "AI" and self._pending_retry_info:
@@ -3049,6 +3530,91 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
 
         self.chat_history.see(tk.END)
         self.chat_history.config(state=tk.DISABLED)
+
+    def _insert_markdown_text(self, text):
+        """Render basic Markdown formatting into the chat Text widget."""
+        import re
+
+        self.chat_history.tag_config(
+            "md_h1", font=("DejaVu Sans", 14, "bold"), foreground=theme.COLORS.get("accent", "#cba6f7")
+        )
+        self.chat_history.tag_config(
+            "md_h2", font=("DejaVu Sans", 13, "bold"), foreground=theme.COLORS.get("accent", "#cba6f7")
+        )
+        self.chat_history.tag_config(
+            "md_h3", font=("DejaVu Sans", 12, "bold"), foreground=theme.COLORS.get("accent", "#cba6f7")
+        )
+        self.chat_history.tag_config(
+            "md_bold", font=("DejaVu Sans", 10, "bold")
+        )
+        self.chat_history.tag_config(
+            "md_italic", font=("DejaVu Sans", 10, "italic")
+        )
+        self.chat_history.tag_config(
+            "md_inline_code",
+            background=theme.COLORS.get("bg_dark", "#181825"),
+            foreground=theme.COLORS.get("fg_light", "#cdd6f4"),
+            font=("Consolas", 10),
+        )
+        self.chat_history.tag_config(
+            "md_link",
+            foreground=theme.COLORS.get("accent", "#89b4fa"),
+            underline=True,
+        )
+
+        lines = text.split("\n")
+        for idx, line in enumerate(lines):
+            heading_match = re.match(r"^(#{1,3})\s+(.*)$", line)
+            bullet_match = re.match(r"^\s*[-*]\s+(.*)$", line)
+
+            if heading_match:
+                level = len(heading_match.group(1))
+                content = heading_match.group(2)
+                self.chat_history.insert(tk.END, content, (f"md_h{level}",))
+            elif bullet_match:
+                self.chat_history.insert(tk.END, "• ")
+                self._insert_markdown_inline(bullet_match.group(1))
+            else:
+                self._insert_markdown_inline(line)
+
+            if idx < len(lines) - 1:
+                self.chat_history.insert(tk.END, "\n")
+
+    def _insert_markdown_inline(self, text):
+        """Render inline Markdown elements (bold, italic, code, links)."""
+        import re
+
+        token_pattern = re.compile(
+            r"(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\[[^\]]+\]\([^)]+\)|\*[^*\n]+\*|_[^_\n]+_)"
+        )
+
+        last = 0
+        for match in token_pattern.finditer(text):
+            start, end = match.span()
+            if start > last:
+                self.chat_history.insert(tk.END, text[last:start])
+
+            token = match.group(0)
+            if token.startswith("**") and token.endswith("**"):
+                self.chat_history.insert(tk.END, token[2:-2], ("md_bold",))
+            elif token.startswith("__") and token.endswith("__"):
+                self.chat_history.insert(tk.END, token[2:-2], ("md_bold",))
+            elif token.startswith("`") and token.endswith("`"):
+                self.chat_history.insert(tk.END, token[1:-1], ("md_inline_code",))
+            elif token.startswith("[") and "](" in token and token.endswith(")"):
+                label, url = token[1:-1].split("](", 1)
+                self.chat_history.insert(tk.END, f"{label} ({url})", ("md_link",))
+            elif token.startswith("*") and token.endswith("*"):
+                self.chat_history.insert(tk.END, token[1:-1], ("md_italic",))
+            elif token.startswith("_") and token.endswith("_"):
+                self.chat_history.insert(tk.END, token[1:-1], ("md_italic",))
+            else:
+                self.chat_history.insert(tk.END, token)
+
+            last = end
+
+        if last < len(text):
+            self.chat_history.insert(tk.END, text[last:])
 
     def _insert_reasoning_section(self, reasoning_text):
         """Insert a collapsible reasoning section into the chat history."""

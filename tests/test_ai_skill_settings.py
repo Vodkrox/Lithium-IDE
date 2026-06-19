@@ -162,6 +162,12 @@ class TestBuildPromptAddendum:
         prompt = settings.build_system_prompt_addendum()
         assert "currently open file" in prompt
 
+    def test_context_minimization_guidance_in_prompt(self, skill_settings):
+        settings, _ = skill_settings
+        prompt = settings.build_system_prompt_addendum()
+        assert "keep context minimal" in prompt
+        assert "smallest useful set of files" in prompt
+
     def test_workspace_scope_in_prompt(self, skill_settings):
         settings, _ = skill_settings
         settings.set("file_scope", "workspace")

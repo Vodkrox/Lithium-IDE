@@ -94,6 +94,17 @@ def executor_no_folder():
 
 
 class TestParseAndExecute:
+    def test_parse_chat_skill_returns_success(self, executor):
+        response = (
+            '<skill name="respond_in_chat">'
+            '<parameter name="content">Hello there!</parameter>'
+            "</skill>"
+        )
+        results = executor.parse_and_execute(response)
+        assert len(results) == 1
+        assert results[0].success is True
+        assert results[0].message == "Hello there!"
+
     def test_empty_response_returns_empty(self, executor):
         results = executor.parse_and_execute("")
         assert results == []
@@ -184,6 +195,18 @@ class TestParseAndExecute:
 
 
 class TestGetCleanResponse:
+    def test_chat_skill_text_is_preserved(self, executor):
+        text = (
+            '<skill name="respond_in_chat">'
+            '<parameter name="content">Talk directly in chat.</parameter>'
+            "</skill>"
+        )
+        assert executor.get_clean_response(text) == "Talk directly in chat."
+
+    def test_html_break_tags_normalize_to_newlines(self, executor):
+        text = "Line one</br>Line two<br/>Line three"
+        assert executor.get_clean_response(text) == "Line one\nLine two\nLine three"
+
     def test_response_without_skills_unchanged(self, executor):
         text = "Hello! This is a regular response."
         assert executor.get_clean_response(text) == text
@@ -339,6 +362,7 @@ class TestGetAvailableSkills:
 
     def test_contains_expected_skills(self, executor):
         skills = executor.get_available_skills()
+        assert "respond_in_chat" in skills
         assert "add_lines" in skills
         assert "delete_lines" in skills
         assert "replace_file" in skills
