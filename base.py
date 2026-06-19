@@ -1,6 +1,7 @@
 import difflib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -158,21 +159,98 @@ class LithiumIDE:
 
         self.paned_window.add(self.editor_frame, minsize=150)
 
+        # ── Interactive Console (persistent terminal) ───────────────
         self.console_frame = tk.Frame(self.paned_window)
-        self.console_label = tk.Label(self.console_frame, text="CONSOLE OUTPUT")
-        self.console_label.pack(fill=tk.X)
 
+        # Console header
+        self.console_header = tk.Frame(self.console_frame, bg=theme.COLORS["bg_dark"])
+        self.console_header.pack(fill=tk.X)
+
+        self.console_label = tk.Label(
+            self.console_header,
+            text="CONSOLE",
+            bg=theme.COLORS["bg_dark"],
+            fg=theme.COLORS["fg_dim"],
+        )
+        self.console_label.pack(side=tk.LEFT, padx=(4, 8))
+
+        # Shell selector (filled with shell names later)
+        self._shell_var = tk.StringVar()
+        self._shell_menu = ttk.Combobox(
+            self.console_header,
+            textvariable=self._shell_var,
+            state="readonly",
+            width=16,
+        )
+        self._shell_menu.pack(side=tk.LEFT, padx=(0, 4), pady=2)
+        self._shell_menu.bind("<<ComboboxSelected>>", self._on_shell_changed)
+
+        self.console_stop_btn = tk.Button(
+            self.console_header,
+            text="Stop",
+            command=self._stop_console_command,
+            state=tk.DISABLED,
+        )
+        self.console_stop_btn.pack(side=tk.RIGHT, padx=(0, 4), pady=2)
+        theme.style_toolbar_button(self.console_stop_btn)
+
+        self.console_clear_btn = tk.Button(
+            self.console_header, text="Clear", command=self._clear_console
+        )
+        self.console_clear_btn.pack(side=tk.RIGHT, padx=4, pady=2)
+        theme.style_toolbar_button(self.console_clear_btn)
+
+        # Console output + input area
         self.console_scrollbar = ttk.Scrollbar(self.console_frame)
         self.console_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.console = tk.Text(
-            self.console_frame, wrap=tk.WORD, yscrollcommand=self.console_scrollbar.set
+            self.console_frame,
+            wrap=tk.WORD,
+            yscrollcommand=self.console_scrollbar.set,
+            bg=theme.COLORS.get("console_bg", "#080808"),
+            fg=theme.COLORS.get("console_fg", "#E6EDF3"),
+            insertbackground=theme.COLORS.get("accent", "#4DA3FF"),
+            font=("Consolas", 10),
+            bd=0,
+            highlightthickness=0,
         )
         self.console.pack(fill=tk.BOTH, expand=1)
         self.console_scrollbar.config(command=self.console.yview)
-        self.console.config(state=tk.DISABLED)
+        self.console.config(state=tk.NORMAL)
+        # Bind Enter key to execute commands
+        self.console.bind("<Return>", self._on_console_enter)
+        # Prevent backspace before the input start
+        self.console.bind("<BackSpace>", self._on_console_backspace)
+        # Track where user input begins (after the prompt)
+        self._console_input_start = "1.0"
 
         self.paned_window.add(self.console_frame, minsize=100)
+
+        # Set up available system shells
+        self._shells = {}
+        self._shells["cmd"] = os.environ.get("COMSPEC", "cmd.exe")
+        ps = self._find_powershell("powershell.exe")
+        if ps:
+            self._shells["PowerShell"] = ps
+        pwsh = self._find_powershell("pwsh.exe")
+        if pwsh:
+            self._shells["PowerShell Core"] = pwsh
+
+        # Populate combobox and select default
+        self._shell_menu["values"] = list(self._shells.keys())
+        default_name = self._detect_shell_name()
+        self._shell_var.set(default_name)
+        self._default_shell = self._shells.get(default_name, "cmd.exe")
+
+        # Track current working directory for persistent cd
+        self._console_cwd = os.getcwd()
+        # Track running process for stop button
+        self._console_process = None
+        self._console_stop_requested = False
+
+        # Show the first prompt immediately
+        self._console_start_shell()
 
         self.controller = LithiumEditorController(
             self.root,
@@ -985,11 +1063,9 @@ class LithiumIDE:
             )
 
             def finish():
-                self.console.config(state=tk.NORMAL)
                 self.console.insert(tk.END, "\n=== AI OUTPUT ===\n")
                 self.console.insert(tk.END, result + "\n")
                 self.console.see(tk.END)
-                self.console.config(state=tk.DISABLED)
                 self.status_label.config(text="AI: response generated.")
 
             self.root.after(0, finish)
@@ -1100,6 +1176,23 @@ Example prompts:
         for frame_attr in ("editor_frame", "console_frame", "explorer_frame"):
             if hasattr(self, frame_attr):
                 getattr(self, frame_attr).config(bg=theme.COLORS["bg_dark"])
+
+        if hasattr(self, "console_header"):
+            self.console_header.config(bg=theme.COLORS["bg_dark"])
+        if hasattr(self, "console_label"):
+            self.console_label.config(
+                bg=theme.COLORS["bg_dark"], fg=theme.COLORS["fg_dim"]
+            )
+        if hasattr(self, "console_stop_btn"):
+            theme.style_toolbar_button(self.console_stop_btn)
+        if hasattr(self, "console_clear_btn"):
+            theme.style_toolbar_button(self.console_clear_btn)
+        if hasattr(self, "console"):
+            self.console.config(
+                bg=theme.COLORS.get("console_bg", "#080808"),
+                fg=theme.COLORS.get("console_fg", "#E6EDF3"),
+                insertbackground=theme.COLORS.get("accent", "#4DA3FF"),
+            )
 
         self._apply_status_bar_theme()
         self._apply_chat_theme()
@@ -1314,9 +1407,8 @@ Example prompts:
         stopped = runner.stop_code()
         if stopped:
             self.status_label.config(text="Script stopped")
-            self.console.config(state=tk.NORMAL)
             self.console.insert(tk.END, "\n[Script stopped by user]\n")
-            self.console.config(state=tk.DISABLED)
+            self.console.see(tk.END)
         else:
             self.status_label.config(text="Stop request failed")
 
@@ -1329,6 +1421,233 @@ Example prompts:
         self.script_running = False
         self.btn_run.config(text=" Run Script", image=self.icons.get("run", ""))
         self.status_label.config(text="Ready")
+        # Restore the interactive prompt after script output
+        self._console_print_prompt()
+
+    # ── Interactive Console (system prompt + per-command exec) ────
+
+    def _console_start_shell(self):
+        """Initialize the interactive console and print the first prompt."""
+        self._console_print_prompt()
+
+    def _find_powershell(self, name):
+        """Find a PowerShell executable, return full path or None."""
+        import shutil
+
+        try:
+            path = shutil.which(name)
+            if path:
+                return path
+        except Exception:
+            pass
+        # Common fallback paths
+        sys_dir = os.environ.get("SystemRoot", "C:\\Windows")
+        fallback = os.path.join(sys_dir, "System32", "WindowsPowerShell", "v1.0", name)
+        if os.path.exists(fallback):
+            return fallback
+        return None
+
+    def _detect_shell_name(self):
+        """Detect which shell name should be selected by default."""
+        comspec = os.environ.get("COMSPEC", "").lower()
+        if "powershell" in comspec or "pwsh" in comspec:
+            for name, path in self._shells.items():
+                try:
+                    if os.path.normcase(os.path.realpath(path)) == os.path.normcase(
+                        os.path.realpath(comspec)
+                    ):
+                        return name
+                except Exception:
+                    if name.lower().replace(" ", "") in comspec:
+                        return name
+        return "cmd"
+
+    def _on_shell_changed(self, event=None):
+        """Handle shell selection change."""
+        name = self._shell_var.get()
+        shell = self._shells.get(name)
+        if shell:
+            self._default_shell = shell
+            self._clear_console()
+
+    def _console_get_prompt(self):
+        """Return the current system prompt string based on tracked cwd."""
+        try:
+            cwd = self._console_cwd or os.getcwd()
+            return cwd + "> "
+        except Exception:
+            return "$ "
+
+    def _console_print_prompt(self):
+        """Print the system prompt at the end of the console."""
+        prompt = self._console_get_prompt()
+        self.console.insert(tk.END, prompt)
+        self.console.see(tk.END)
+        # Use index(tk.INSERT) — after insert(), the cursor (INSERT mark)
+        # moves to the end of the inserted text ON THE SAME LINE.
+        # This is correct, unlike index(tk.END) which returns the *next* line.
+        self._console_input_start = self.console.index(tk.INSERT)
+
+    def _clear_console(self):
+        """Clear the console and print a fresh prompt."""
+        self.console.delete("1.0", tk.END)
+        self._console_input_start = "1.0"
+        self._console_print_prompt()
+
+    def _on_console_enter(self, event=None):
+        """Handle Enter — execute the command and show output + new prompt."""
+        # Extract what the user typed after the last prompt.
+        # _console_input_start is a FIXED position (from when the prompt
+        # was printed), so it stays correct even as the user types.
+        cmd = self.console.get(self._console_input_start, tk.END)
+        cmd = cmd.rstrip("\n")
+
+        if not cmd.strip():
+            # Empty command: newline + fresh prompt
+            self.console.insert(tk.END, "\n")
+            self._console_print_prompt()
+            return "break"
+
+        # Insert newline so output starts on the next line
+        self.console.insert(tk.END, "\n")
+        self._console_input_start = self.console.index(tk.INSERT)
+
+        # Run command in a background thread so the GUI stays responsive
+        # (especially for interactive programs like python, ping, etc.)
+        self._console_stop_requested = False
+        self.console_stop_btn.config(state=tk.NORMAL)
+        threading.Thread(
+            target=self._execute_console_command, args=(cmd,), daemon=True
+        ).start()
+
+        return "break"
+
+    def _execute_console_command(self, command):
+        """Run a command via the default shell in a thread and collect output."""
+        proc = None
+        try:
+            shell = self._default_shell
+            is_powershell = "powershell" in shell.lower() or "pwsh" in shell.lower()
+
+            # Detect cd command to update tracked cwd
+            cmd_line = command.strip()
+            is_cd = cmd_line.lower().startswith("cd ")
+
+            if is_powershell:
+                proc = subprocess.Popen(
+                    [shell, "-NoProfile", "-Command", command],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.PIPE,
+                    text=True,
+                    cwd=self._console_cwd,
+                )
+            else:
+                proc = subprocess.Popen(
+                    [shell, "/c", command],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.PIPE,
+                    text=True,
+                    cwd=self._console_cwd,
+                )
+
+            # Store for stop button
+            self._console_process = proc
+
+            try:
+                stdout, _ = proc.communicate(timeout=300)
+                if stdout:
+                    text = stdout.rstrip("\r\n")
+                    if text:
+                        self.root.after(0, self._console_append_output, text + "\n")
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                if proc.stdout:
+                    proc.stdout.close()
+                if not self._console_stop_requested:
+                    self.root.after(
+                        0,
+                        self._console_append_output,
+                        "\n[Command timed out after 300s]\n",
+                    )
+            except (ValueError, OSError):
+                # Pipe closed by stop handler, that's expected
+                pass
+
+            # Update tracked cwd after cd commands (only if not stopped)
+            if is_cd and not self._console_stop_requested:
+                try:
+                    if is_powershell:
+                        r = subprocess.run(
+                            [shell, "-NoProfile", "-Command", "(Get-Location).Path"],
+                            capture_output=True,
+                            text=True,
+                            timeout=5,
+                        )
+                        if r.returncode == 0:
+                            self._console_cwd = r.stdout.strip()
+                    else:
+                        r = subprocess.run(
+                            [shell, "/c", "echo %cd%"],
+                            capture_output=True,
+                            text=True,
+                            timeout=5,
+                        )
+                        if r.returncode == 0:
+                            self._console_cwd = r.stdout.strip()
+                except Exception:
+                    pass
+
+        except Exception as e:
+            self.root.after(0, self._console_append_output, f"[Error: {e}]\n")
+        finally:
+            self._console_process = None
+            self.root.after(0, lambda: self.console_stop_btn.config(state=tk.DISABLED))
+            if self._console_stop_requested:
+                self.root.after(
+                    0,
+                    self._console_append_output,
+                    "\n[Command stopped by user]\n",
+                )
+            self._console_stop_requested = False
+            self.root.after(0, self._console_print_prompt)
+
+    def _stop_console_command(self):
+        """Stop the currently running console command."""
+        self._console_stop_requested = True
+        proc = self._console_process
+        if proc and proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            # Close the pipe so communicate() unblocks
+            try:
+                if proc.stdout:
+                    proc.stdout.close()
+            except Exception:
+                pass
+        self.console_stop_btn.config(state=tk.DISABLED)
+
+    def _console_append_output(self, text):
+        """Append text to the console."""
+        self.console.insert(tk.END, text)
+        self.console.see(tk.END)
+        # Keep input_start at the end of the latest output so that if
+        # the user types before _console_print_prompt runs, the next
+        # Enter extracts only the newly typed text (not the output).
+        self._console_input_start = self.console.index(tk.INSERT)
+
+    def _on_console_backspace(self, event=None):
+        """Prevent backspace from deleting shell output (past input start)."""
+        cursor_pos = self.console.index(tk.INSERT)
+        if self.console.compare(cursor_pos, "<=", self._console_input_start):
+            return "break"
+        return None
 
     def show_search_dialog(self):
         search_win = tk.Toplevel(self.root)
