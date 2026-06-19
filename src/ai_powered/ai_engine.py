@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from src.ai_powered.ai_level import get_default_model
 
+
 def _get_appdata_dir():
     """Return the LithiumIDE appdata directory."""
     if sys.platform == "win32":
@@ -468,6 +469,181 @@ def _extract_llama_cpp_text(response):
         if choices:
             return choices[0].get("text", "").strip()
     return str(response).strip()
+
+
+def _find_gguf_path(resolved_source):
+    """Find a .gguf file path from a resolved model source."""
+    if os.path.isfile(resolved_source) and resolved_source.endswith(".gguf"):
+        return resolved_source
+    if os.path.isdir(resolved_source):
+        for f in os.listdir(resolved_source):
+            if f.endswith(".gguf"):
+                return os.path.join(resolved_source, f)
+    return None
+
+
+def _build_stream_completion_kwargs(prompt, **kwargs):
+    """Build kwargs dict for llama.cpp completion calls (both stream and non-stream)."""
+    completion_kwargs = {
+        "prompt": prompt,
+        "max_tokens": kwargs.get("max_tokens", 512),
+        "temperature": kwargs.get("temperature", 0.5),
+        "top_p": kwargs.get("top_p", 0.85),
+        "top_k": kwargs.get("top_k", 40),
+        "repeat_penalty": kwargs.get("repeat_penalty", 1.1),
+        "mirostat_mode": kwargs.get("mirostat_mode", 2),
+        "stop": [
+            "<|im_end|>",
+            "<|im_start|>user",
+            "<|im_start|>system",
+            "<|im_start|>assistant",
+            "<|endoftext|>",
+            "<|end|>",
+            "</s>",
+        ],
+    }
+    if kwargs.get("mirostat_mode", 2) > 0:
+        completion_kwargs["mirostat_tau"] = kwargs.get("mirostat_tau", 3.0)
+        completion_kwargs["mirostat_eta"] = kwargs.get("mirostat_eta", 0.1)
+    if kwargs.get("min_p", 0) > 0:
+        completion_kwargs["min_p"] = kwargs.get("min_p", 0.0)
+    if kwargs.get("grammar") is not None:
+        completion_kwargs["grammar"] = kwargs.get("grammar")
+    return completion_kwargs
+
+
+def stream_generate_text(
+    model_source,
+    system_prompt,
+    user_prompt,
+    **kwargs,
+):
+    """Generator that yields text tokens one at a time from the model.
+
+    Uses llama.cpp's streaming mode for GGUF models.
+    For other backends (transformers, external subprocess), yields the
+    complete response as a single token as a fallback.
+
+    Args:
+        model_source: Path or URL to the model.
+        system_prompt: System-level instructions.
+        user_prompt: The user's request.
+        **kwargs: Inference parameters (max_tokens, temperature, etc.).
+
+    Yields:
+        str: Text tokens as they are generated.
+    """
+    resolved_source = resolve_model_source(model_source)
+    if not resolved_source:
+        raise RuntimeError("Could not resolve the AI model path.")
+
+    prompt_text = _format_chat_prompt(system_prompt, user_prompt)
+    gguf_path = _find_gguf_path(resolved_source)
+
+    if gguf_path:
+        Llama = _safe_import_llama_cpp()
+        if Llama is not None:
+            yield from _stream_from_llama_cpp_inprocess(
+                gguf_path, prompt_text, **kwargs
+            )
+            return
+        # fallback: external subprocess or full generation
+        result = _generate_with_llama_cpp(gguf_path, prompt_text, **kwargs)
+        if result:
+            yield result
+        return
+
+    # Fallback for non-GGUF models
+    response = generate_text_from_model(
+        model_source, system_prompt, user_prompt, **kwargs
+    )
+    if response:
+        yield response
+
+
+def _stream_from_llama_cpp_inprocess(model_path, prompt, **kwargs):
+    """Stream tokens from llama.cpp in the current process."""
+    Llama = _safe_import_llama_cpp()
+    if Llama is None:
+        raise RuntimeError("llama-cpp-python is not installed.")
+
+    n_ctx = kwargs.get("n_ctx", 8192)
+    n_batch = kwargs.get("n_batch", 512)
+    n_threads = kwargs.get("n_threads")
+
+    cache_key = (model_path, n_ctx, n_batch, n_threads)
+    if cache_key in _model_cache:
+        llm = _model_cache[cache_key]
+    else:
+        llama_kwargs = {
+            "model_path": model_path,
+            "n_ctx": n_ctx,
+            "n_batch": n_batch,
+            "repeat_last_n": kwargs.get("repeat_last_n", 64),
+            "verbose": False,
+        }
+        if n_threads is not None:
+            llama_kwargs["n_threads"] = n_threads
+        try:
+            llm = Llama(**llama_kwargs)
+            _model_cache[cache_key] = llm
+        except TypeError as e:
+            match = re.search(r"unexpected keyword argument '(\w+)'", str(e))
+            if match and match.group(1) in llama_kwargs:
+                _ = llama_kwargs.pop(match.group(1))
+                llm = Llama(**llama_kwargs)
+                _model_cache[cache_key] = llm
+            else:
+                raise RuntimeError(f"Failed to load model: {e}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load model: {e}")
+
+    completion_kwargs = _build_stream_completion_kwargs(prompt, **kwargs)
+    completion_kwargs["stream"] = True
+
+    start_time = time.time()
+    token_count = 0
+    try:
+        for chunk in llm(**completion_kwargs):
+            if not isinstance(chunk, dict):
+                continue
+            choices = chunk.get("choices", [])
+            if choices:
+                token = choices[0].get("text", "")
+                if token:
+                    token_count += 1
+                    yield token
+
+        elapsed = time.time() - start_time
+        print(
+            f"[{datetime.now().strftime('%H:%M:%S')}] [AI Engine] "
+            f"Streaming: {elapsed:.2f}s, {token_count} tokens"
+        )
+    except Exception as e:
+        err_str = str(e).lower()
+        oom_keywords = ["out of memory", "cuda out of memory", "cuda oom"]
+        if any(kw in err_str for kw in oom_keywords):
+            if cache_key in _model_cache:
+                del _model_cache[cache_key]
+            reduced_ctx = max(512, n_ctx // 2)
+            reduced_kwargs = dict(llama_kwargs)
+            reduced_kwargs["n_ctx"] = reduced_ctx
+            try:
+                llm_recovery = Llama(**reduced_kwargs)
+                completion_kwargs["max_tokens"] = min(
+                    kwargs.get("max_tokens", 512), 128
+                )
+                for chunk in llm_recovery(**completion_kwargs):
+                    if isinstance(chunk, dict):
+                        choices = chunk.get("choices", [])
+                        if choices:
+                            token = choices[0].get("text", "")
+                            if token:
+                                yield token
+                return
+            except Exception as e2:
+                raise RuntimeError(f"Model still OOM after reducing context: {e2}")
+        raise RuntimeError(f"Streaming generation failed: {e}")
 
 
 # ---------------------------------------------------------------------------
