@@ -14,7 +14,14 @@ from src.utils import resource_path
 class FileExplorer:
     """A file explorer panel that displays the project folder structure."""
 
-    def __init__(self, parent, controller, theme_colors, theme_fonts):
+    def __init__(
+        self,
+        parent,
+        controller,
+        theme_colors,
+        theme_fonts,
+        on_folder_open_callback=None,
+    ):
         """
         Initialize the File Explorer panel.
 
@@ -23,12 +30,14 @@ class FileExplorer:
             controller: The LithiumEditorController instance for file operations
             theme_colors: Dictionary of theme colors
             theme_fonts: Dictionary of theme fonts
+            on_folder_open_callback: Optional callable(c Folder path) when a folder is opened
         """
         self.parent = parent
         self.controller = controller
         self.colors = theme_colors
         self.fonts = theme_fonts
         self.current_folder = None
+        self.on_folder_open_callback = on_folder_open_callback
         self.tree = None
         self.icons = {}
 
@@ -258,6 +267,9 @@ class FileExplorer:
         self.path_label.config(text=folder_path)
         for item in self.tree.get_children():
             self.tree.delete(item)
+
+        if self.on_folder_open_callback:
+            self.on_folder_open_callback(folder_path)
 
         self._populate_tree(self.tree, "", folder_path)
         self.tree.item("", open=True)

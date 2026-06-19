@@ -22,6 +22,7 @@ from src.ai_powered.ai_skills import get_executor as get_ai_skills_executor
 from src.ai_powered.ai_skills import reset_executor as reset_ai_skills_executor
 from src.ai_powered.conversation_manager import Conversation, get_conversation_manager
 from src.autocomplete import LithiumAutocompleteManager
+from src.console import Console
 from src.editor import LithiumEditorController
 from src.file_explorer import FileExplorer
 from src.settings import SettingsManager
@@ -142,8 +143,35 @@ class LithiumIDE:
         self.center_right_paned.add(self.paned_window, minsize=400)
 
         self.editor_frame = tk.Frame(self.paned_window)
-        self.editor_label = tk.Label(self.editor_frame, text="EDITOR (PYTHON)")
-        self.editor_label.pack(fill=tk.X)
+        self.editor_header = tk.Frame(self.editor_frame, bg=theme.COLORS["bg_header"])
+        self.editor_label = tk.Label(
+            self.editor_header,
+            text="EDITOR (PYTHON)",
+            bg=theme.COLORS["bg_header"],
+            fg=theme.COLORS["fg_dim"],
+            font=theme.FONTS["header"],
+            anchor="w",
+            padx=12,
+            pady=8,
+        )
+        self.editor_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.console_toggle_btn = tk.Button(
+            self.editor_header,
+            text="⬚ Terminal",
+            font=theme.FONTS["ui"],
+            fg=theme.COLORS["fg_dim"],
+            bg=theme.COLORS["bg_header"],
+            bd=0,
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            activebackground=theme.COLORS["sash_color"],
+            activeforeground=theme.COLORS["accent"],
+            command=self.toggle_console,
+        )
+        self.console_toggle_btn.pack(side=tk.RIGHT, padx=(0, 4))
+        self.editor_header.pack(fill=tk.X)
 
         self.editor_scrollbar = ttk.Scrollbar(self.editor_frame)
         self.editor_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -158,6 +186,26 @@ class LithiumIDE:
 
         self.paned_window.add(self.editor_frame, minsize=150)
 
+        # ── Console panel (integrated terminal below editor) ──
+        self.console_frame = tk.Frame(self.paned_window, bg=theme.COLORS["bg_dark"])
+        self.console_header = tk.Label(
+            self.console_frame,
+            text=" TERMINAL",
+            font=theme.FONTS["header"],
+            fg=theme.COLORS["fg_dim"],
+            bg=theme.COLORS["bg_header"],
+            anchor="w",
+            padx=12,
+            pady=4,
+        )
+        self.console_header.pack(fill=tk.X)
+
+        self.console = Console(self.console_frame)
+        self.console.pack(fill=tk.BOTH, expand=True)
+        self.console.apply_theme(theme.COLORS)
+
+        self.paned_window.add(self.console_frame, minsize=100, height=200)
+
         self.controller = LithiumEditorController(
             self.root,
             self.editor,
@@ -165,7 +213,7 @@ class LithiumIDE:
             self.status_label,
             self.selected_lang,
             self.editor_label,
-            on_file_open_callback=self.update_editor_ai_state,
+            on_file_open_callback=self._on_file_opened,
             require_explorer_open=True,
             settings_manager=self.settings_manager,
         )
@@ -358,7 +406,11 @@ class LithiumIDE:
         self.explorer_frame.pack_propagate(False)
 
         self.file_explorer = FileExplorer(
-            self.explorer_frame, self.controller, theme.COLORS, theme.FONTS
+            self.explorer_frame,
+            self.controller,
+            theme.COLORS,
+            theme.FONTS,
+            on_folder_open_callback=self._on_folder_opened,
         )
         self.main_paned.add(self.explorer_frame, minsize=150, width=320)
 
@@ -1054,12 +1106,23 @@ Example prompts:
                 sashrelief=tk.FLAT,
             )
 
-        for frame_attr in ("editor_frame", "explorer_frame"):
+        for frame_attr in ("editor_frame", "explorer_frame", "console_frame"):
             if hasattr(self, frame_attr):
                 getattr(self, frame_attr).config(bg=theme.COLORS["bg_dark"])
 
         self._apply_status_bar_theme()
         self._apply_chat_theme()
+
+        # Apply theme to console
+        if hasattr(self, "console"):
+            self.console.apply_theme(theme.COLORS)
+        for header_attr in ("console_header", "editor_header"):
+            if hasattr(self, header_attr):
+                getattr(self, header_attr).config(
+                    bg=theme.COLORS["bg_header"],
+                )
+        if hasattr(self, "console_toggle_btn"):
+            theme.style_toolbar_button(self.console_toggle_btn)
 
         if hasattr(self, "file_explorer") and self.file_explorer:
             self.file_explorer.apply_theme()
@@ -1537,6 +1600,11 @@ Example prompts:
                 0, lambda: self.status_label.config(text=f"AI Skills: {message}")
             )
 
+        def on_filesystem_change():
+            """Refresh the file explorer when AI creates or deletes files."""
+            if hasattr(self, "file_explorer") and self.file_explorer:
+                self.root.after(100, self.file_explorer.refresh)
+
         try:
             self.ai_skills_executor = get_ai_skills_executor(
                 editor_getter=get_editor_content,
@@ -1544,6 +1612,7 @@ Example prompts:
                 file_path_getter=get_file_path,
                 project_folder_getter=get_project_folder,
                 status_callback=status_update,
+                on_filesystem_change=on_filesystem_change,
             )
             self._refresh_ai_system_prompt()
         except Exception as e:
@@ -1557,6 +1626,16 @@ Example prompts:
         else:
             self.center_right_paned.add(self.chat_frame, minsize=250, width=300)
             self.chat_visible = True
+
+    def toggle_console(self):
+        """Show or hide the integrated terminal panel."""
+        if self.console_frame.winfo_ismapped():
+            self.paned_window.remove(self.console_frame)
+            self.console_toggle_btn.config(text="⬚ Terminal")
+        else:
+            self.paned_window.add(self.console_frame, minsize=100, height=200)
+            self.console_toggle_btn.config(text="✕ Terminal")
+        self.paned_window.update_idletasks()
 
     def clear_chat(self):
         self.chat_history.config(state=tk.NORMAL)
@@ -3489,6 +3568,21 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             self._flash_after_id = self.root.after(180, lambda: blink(count + 1))
 
         blink()
+
+    # ── console directory sync ──────────────────────────────────────────────
+
+    def _on_file_opened(self):
+        """Called when a file is opened. Syncs the console to its parent dir."""
+        self.update_editor_ai_state()
+        if hasattr(self, "console") and self.controller.file_path:
+            parent = os.path.dirname(self.controller.file_path)
+            if parent:
+                self.console._change_dir(parent)
+
+    def _on_folder_opened(self, folder_path):
+        """Called when a folder is opened in the explorer. Syncs the console to it."""
+        if hasattr(self, "console"):
+            self.console._change_dir(folder_path)
 
     def update_editor_ai_state(self):
         """Update the enabled/disabled state of editor and AI features based on whether a file is opened."""

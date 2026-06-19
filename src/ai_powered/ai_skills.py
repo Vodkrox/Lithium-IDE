@@ -68,6 +68,7 @@ class AISkillsExecutor:
         file_path_getter: Callable,
         project_folder_getter: Optional[Callable] = None,
         status_callback: Optional[Callable] = None,
+        on_filesystem_change: Optional[Callable] = None,
     ):
         """
         Initialize the AI Skills Executor.
@@ -78,12 +79,14 @@ class AISkillsExecutor:
             file_path_getter: Function that returns the current file path
             project_folder_getter: Function that returns the project folder path (for security restrictions)
             status_callback: Optional function to call with status updates
+            on_filesystem_change: Optional callback invoked after files/folders are created or deleted
         """
         self.editor_getter = editor_getter
         self.editor_setter = editor_setter
         self.file_path_getter = file_path_getter
         self.project_folder_getter = project_folder_getter
         self.status_callback = status_callback
+        self.on_filesystem_change = on_filesystem_change
         self.file_scope = "open_file"
 
         self._skills = {
@@ -840,11 +843,17 @@ class AISkillsExecutor:
                 f.write(content)
 
             self._log(f"Created file: {path}")
+            self._notify_filesystem_change()
             return AISkillResult(
                 True, f"Successfully created file: {os.path.basename(path)}"
             )
         except Exception as e:
             return AISkillResult(False, f"Failed to create file: {str(e)}")
+
+    def _notify_filesystem_change(self):
+        """Notify the listener that files have changed on disk."""
+        if self.on_filesystem_change:
+            self.on_filesystem_change()
 
     def _skill_delete_file(self, params: Dict[str, str]) -> AISkillResult:
         """
@@ -870,6 +879,7 @@ class AISkillsExecutor:
             if os.path.isfile(path):
                 os.remove(path)
                 self._log(f"Deleted file: {path}")
+                self._notify_filesystem_change()
                 return AISkillResult(
                     True, f"Successfully deleted file: {os.path.basename(path)}"
                 )
@@ -901,6 +911,7 @@ class AISkillsExecutor:
         try:
             os.makedirs(path, exist_ok=True)
             self._log(f"Created folder: {path}")
+            self._notify_filesystem_change()
             return AISkillResult(
                 True, f"Successfully created folder: {os.path.basename(path)}"
             )
@@ -938,6 +949,7 @@ class AISkillsExecutor:
                 else:
                     os.rmdir(path)
                 self._log(f"Deleted folder: {path}")
+                self._notify_filesystem_change()
                 return AISkillResult(
                     True, f"Successfully deleted folder: {os.path.basename(path)}"
                 )
@@ -1326,6 +1338,7 @@ def get_executor(
     file_path_getter=None,
     project_folder_getter=None,
     status_callback=None,
+    on_filesystem_change=None,
 ):
     """
     Get or create the default AI Skills Executor.
@@ -1336,6 +1349,7 @@ def get_executor(
         file_path_getter: Function that returns the current file path
         project_folder_getter: Function that returns the project folder path (for security)
         status_callback: Optional function for status updates
+        on_filesystem_change: Optional callback invoked after files/folders are created or deleted
 
     Returns:
         AISkillsExecutor instance
@@ -1353,6 +1367,7 @@ def get_executor(
             file_path_getter,
             project_folder_getter,
             status_callback,
+            on_filesystem_change,
         )
 
     return _default_executor
