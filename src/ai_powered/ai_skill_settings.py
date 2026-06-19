@@ -5,8 +5,6 @@ SETTINGS_KEYS = {
     "web_search": "ai_skill_web_search",
     "reasoning": "ai_skill_reasoning",
     "explain_actions": "ai_skill_explain_actions",
-    "auto_approve": "ai_skill_auto_approve",
-    "run_commands": "ai_skill_run_commands",
     "notify_on_complete": "ai_skill_notify_on_complete",
     "code_review": "ai_skill_code_review",
     "refactor": "ai_skill_refactor",
@@ -20,8 +18,6 @@ DEFAULTS = {
     "web_search": False,
     "reasoning": False,
     "explain_actions": False,
-    "auto_approve": False,
-    "run_commands": False,
     "notify_on_complete": False,
     "code_review": False,
     "refactor": False,
@@ -39,8 +35,6 @@ SKILL_TOGGLE_LABELS = (
     ("web_search", "Search the web"),
     ("reasoning", "Reason"),
     ("explain_actions", "Explain actions"),
-    ("auto_approve", "Auto-approve changes"),
-    ("run_commands", "Run commands"),
     ("notify_on_complete", "Notify when done"),
     ("code_review", "Review & analyze code"),
     ("refactor", "Suggest refactoring"),
@@ -128,16 +122,6 @@ class AISkillSettings:
         if self.get("web_search"):
             parts.append(
                 "Web search is enabled. You may use it when local project context is not enough."
-            )
-
-        if self.get("run_commands"):
-            parts.append(
-                "Shell command execution is enabled for safe project commands when verification is needed."
-            )
-
-        if self.get("auto_approve"):
-            parts.append(
-                "Changes will be applied automatically without manual approval."
             )
 
         # --- New skills ---

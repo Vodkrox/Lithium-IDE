@@ -9,7 +9,7 @@ import urllib.request
 from tkinter import filedialog, messagebox, ttk
 from urllib.parse import urlparse
 
-from src import runner, theme
+from src import theme
 from src.ai_powered import ai_engine as ai_runner
 from src.ai_powered import ai_level as ai_level_manager
 from src.ai_powered.ai_skill_settings import (
@@ -158,22 +158,6 @@ class LithiumIDE:
 
         self.paned_window.add(self.editor_frame, minsize=150)
 
-        self.console_frame = tk.Frame(self.paned_window)
-        self.console_label = tk.Label(self.console_frame, text="CONSOLE OUTPUT")
-        self.console_label.pack(fill=tk.X)
-
-        self.console_scrollbar = ttk.Scrollbar(self.console_frame)
-        self.console_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.console = tk.Text(
-            self.console_frame, wrap=tk.WORD, yscrollcommand=self.console_scrollbar.set
-        )
-        self.console.pack(fill=tk.BOTH, expand=1)
-        self.console_scrollbar.config(command=self.console.yview)
-        self.console.config(state=tk.DISABLED)
-
-        self.paned_window.add(self.console_frame, minsize=100)
-
         self.controller = LithiumEditorController(
             self.root,
             self.editor,
@@ -229,10 +213,8 @@ class LithiumIDE:
         theme.apply_theme(
             self.root,
             self.editor,
-            self.console,
             self.paned_window,
             self.editor_label,
-            self.console_label,
             self.line_numbers,
             self.status_bar,
             self.toolbar,
@@ -247,7 +229,7 @@ class LithiumIDE:
             self.icons["theme"] = tk.PhotoImage(
                 file=resource_path("src/assets/theme.png")
             )
-            self.icons["run"] = tk.PhotoImage(file=resource_path("src/assets/run.png"))
+
             self.icons["python"] = tk.PhotoImage(
                 file=resource_path("src/assets/python.png")
             )
@@ -328,13 +310,6 @@ class LithiumIDE:
 
         self._update_ai_level_display()
 
-        try:
-            stop_icon = tk.PhotoImage(width=12, height=12)
-            stop_icon.put("red", to=(0, 0, 11, 11))
-            self.icons["stop"] = stop_icon
-        except Exception:
-            self.icons["stop"] = self.icons.get("run", "")
-
         self.btn_theme = tk.Button(
             self.toolbar,
             text=" Theme ▾",
@@ -345,16 +320,8 @@ class LithiumIDE:
         self.btn_theme.pack(side=tk.LEFT, padx=2, pady=3)
         theme.style_toolbar_button(self.btn_theme)
 
-        self.btn_run = tk.Button(
-            self.toolbar,
-            text=" Run Script",
-            image=self.icons.get("run", ""),
-            compound=tk.LEFT,
-            command=self.run_code,
-        )
-        self.btn_run.pack(side=tk.LEFT, padx=(20, 2), pady=3)
-        theme.style_toolbar_button(self.btn_run)
-        self.script_running = False
+        self._ai_generating = False
+        self._ai_stop_event = threading.Event()
 
         self.active_menu = None
 
@@ -684,7 +651,6 @@ class LithiumIDE:
         self.root.bind("<Control-n>", lambda event: self.controller.new_file())
         self.root.bind("<Control-o>", lambda event: self.controller.open_file())
         self.root.bind("<Control-s>", lambda event: self.controller.save_file())
-        self.root.bind("<F5>", lambda event: self.run_code())
         self.root.bind("<Control-Shift-P>", lambda event: self.show_search_dialog())
         self.root.bind("<Control-Shift-p>", lambda event: self.show_search_dialog())
         self.root.protocol("WM_DELETE_WINDOW", self.on_app_close)
@@ -983,11 +949,6 @@ class LithiumIDE:
             )
 
             def finish():
-                self.console.config(state=tk.NORMAL)
-                self.console.insert(tk.END, "\n=== AI OUTPUT ===\n")
-                self.console.insert(tk.END, result + "\n")
-                self.console.see(tk.END)
-                self.console.config(state=tk.DISABLED)
                 self.status_label.config(text="AI: response generated.")
 
             self.root.after(0, finish)
@@ -1073,10 +1034,8 @@ Example prompts:
         theme.apply_theme(
             self.root,
             self.editor,
-            self.console,
             self.paned_window,
             self.editor_label,
-            self.console_label,
             self.line_numbers,
             self.status_bar,
             self.toolbar,
@@ -1095,7 +1054,7 @@ Example prompts:
                 sashrelief=tk.FLAT,
             )
 
-        for frame_attr in ("editor_frame", "console_frame", "explorer_frame"):
+        for frame_attr in ("editor_frame", "explorer_frame"):
             if hasattr(self, frame_attr):
                 getattr(self, frame_attr).config(bg=theme.COLORS["bg_dark"])
 
@@ -1110,7 +1069,6 @@ Example prompts:
             self.btn_lang,
             self.btn_ai,
             self.btn_theme,
-            self.btn_run,
             self.chat_send_btn,
             self.chat_clear_btn,
         ):
@@ -1291,43 +1249,6 @@ Example prompts:
         except Exception:
             pass
 
-    def run_code(self, event=None):
-        if runner.is_running():
-            self._stop_script()
-            return
-
-        if not self.controller.file_path:
-            self.controller.save_as_file()
-            if not self.controller.file_path:
-                return
-        else:
-            self.controller.save_file()
-
-        self._script_started()
-        runner.run_code(
-            self.controller.file_path, self.console, on_complete=self._script_complete
-        )
-
-    def _stop_script(self):
-        stopped = runner.stop_code()
-        if stopped:
-            self.status_label.config(text="Script stopped")
-            self.console.config(state=tk.NORMAL)
-            self.console.insert(tk.END, "\n[Script stopped by user]\n")
-            self.console.config(state=tk.DISABLED)
-        else:
-            self.status_label.config(text="Stop request failed")
-
-    def _script_started(self):
-        self.script_running = True
-        self.btn_run.config(text=" Stop Script", image=self.icons.get("stop", ""))
-        self.status_label.config(text="Running script...")
-
-    def _script_complete(self):
-        self.script_running = False
-        self.btn_run.config(text=" Run Script", image=self.icons.get("run", ""))
-        self.status_label.config(text="Ready")
-
     def show_search_dialog(self):
         search_win = tk.Toplevel(self.root)
         search_win.title("Search Language")
@@ -1447,7 +1368,6 @@ Example prompts:
         scope = self.ai_skill_settings.get("file_scope")
         self.ai_skills_executor.configure_capabilities(
             file_scope=scope,
-            allow_run_commands=self.ai_skill_settings.get("run_commands"),
         )
         self.ai_system_prompt += "\n" + self.ai_skills_executor.generate_skill_prompt(
             file_scope=scope
@@ -1571,286 +1491,26 @@ Example prompts:
 
         return False
 
-    def _finish_dependency_setup(self):
-        if self._is_ai_model_ready():
-            self._enable_root()
-            return True
-        self.configure_ai_model()
-        return False
-
-    def _disable_root(self):
-        """Disable the root window (Windows-only, safe to ignore on other platforms)."""
-        try:
-            self.root.attributes("-disabled", True)
-        except Exception:
-            pass
-
-    def _enable_root(self):
-        """Re-enable the root window (Windows-only, safe to ignore on other platforms)."""
-        try:
-            self.root.attributes("-disabled", False)
-        except Exception:
-            pass
-
     def check_and_setup_dependencies(self):
-        self._disable_root()
         missing = self._get_missing_dependencies()
-        if not missing:
-            return self._finish_dependency_setup()
-
-        self._disable_root()
-        setup_win = tk.Toplevel(self.root)
-        setup_win.title("Lithium IDE - AI Setup Assistant")
-        setup_win.geometry("500x320")
-        setup_win.resizable(False, False)
-
-        setup_win.update_idletasks()
-        width = setup_win.winfo_width()
-        height = setup_win.winfo_height()
-        x = (setup_win.winfo_screenwidth() // 2) - (width // 2)
-        y = (setup_win.winfo_screenheight() // 2) - (height // 2)
-        setup_win.geometry(f"+{x}+{y}")
-
-        bg_color = theme.COLORS.get("bg_dark", "#1e1e1e")
-        fg_color = theme.COLORS.get("fg_light", "#ffffff")
-        fg_dim = theme.COLORS.get("fg_dim", "#888888")
-        accent_color = theme.COLORS.get("accent", "#007acc")
-        sash_color = theme.COLORS.get("sash_color", "#555555")
-
-        setup_win.configure(bg=bg_color)
-
-        title_label = tk.Label(
-            setup_win,
-            text="Initial AI Configuration",
-            font=("DejaVu Sans", 13, "bold"),
-            fg=accent_color,
-            bg=bg_color,
-        )
-        title_label.pack(pady=(20, 10))
-
-        desc_text = "To use the local AI tools, the following dependencies need to be installed:\n\n"
-        for dep in missing:
-            desc_text += f" • {dep}\n"
-        desc_text += "\nWould you like to install them automatically now?"
-
-        desc_label = tk.Label(
-            setup_win,
-            text=desc_text,
-            font=("DejaVu Sans", 10),
-            fg=fg_color,
-            bg=bg_color,
-            justify=tk.LEFT,
-            wraplength=460,
-        )
-        desc_label.pack(padx=20, pady=10, anchor="w")
-
-        progress_label = tk.Label(
-            setup_win,
-            text="",
-            font=("DejaVu Sans", 9, "italic"),
-            fg=fg_dim,
-            bg=bg_color,
-        )
-        progress_label.pack(fill=tk.X, padx=20, pady=(5, 2))
-
-        progress_bar = ttk.Progressbar(
-            setup_win, orient="horizontal", mode="determinate", maximum=100
-        )
-        progress_bar.pack(fill=tk.X, padx=20, pady=(0, 20))
-
-        button_frame = tk.Frame(setup_win, bg=bg_color)
-        button_frame.pack(fill=tk.X, padx=20, pady=5)
-
-        install_btn = tk.Button(
-            button_frame,
-            text="Install Dependencies",
-            font=("DejaVu Sans", 10, "bold"),
-            bg=accent_color,
-            fg=bg_color,
-            activebackground=sash_color,
-            activeforeground=fg_color,
-            bd=0,
-            padx=15,
-            pady=5,
-            command=lambda: start_installation(),
-        )
-        install_btn.pack(side=tk.RIGHT)
-
-        installation_in_progress = {"active": False}
-
-        def on_close():
-            if installation_in_progress["active"]:
-                messagebox.showwarning(
-                    "Installation in Progress",
-                    "Dependencies are being installed. Please wait until the process finishes.",
-                )
-                return
-            if messagebox.askyesno(
-                "Exit",
-                "Are you sure you want to exit? The editor requires these dependencies to continue.",
-            ):
-                setup_win.destroy()
+        if missing:
+            print("Dependencies missing, run pip install -r requirements.txt")
+            msg = (
+                "Missing required dependencies:\n"
+                + "\n".join(f"  \u2022 {m}" for m in missing)
+                + "\n\nPlease run the following command and restart the IDE:\n"
+                "  pip install -r requirements.txt"
+            )
+            try:
+                messagebox.showerror("Lithium IDE - Missing Dependencies", msg)
+            except Exception:
+                pass
+            # Force exit — don't let the IDE start
+            try:
                 self.root.destroy()
-                sys.exit(0)
-
-        setup_win.protocol("WM_DELETE_WINDOW", on_close)
-
-        def start_installation():
-            import tempfile
-            import threading
-
-            installation_in_progress["active"] = True
-            install_btn.config(state="disabled")
-            progress_bar.config(mode="indeterminate")
-            progress_bar.start(10)
-            progress_label.config(
-                text="Installing dependencies... This may take a moment."
-            )
-
-            def install_thread():
-                import importlib
-                import os
-                import subprocess
-                import sys
-
-                from src.utils import get_python_executable
-
-                python_exe = get_python_executable()
-                try:
-                    custom_env = os.environ.copy()
-                    temp_dir = tempfile.mkdtemp(prefix="lithium_pip_")
-                    custom_env["TEMP"] = temp_dir
-                    custom_env["TMP"] = temp_dir
-
-                    for dep in missing:
-                        self.root.after(
-                            0,
-                            lambda d=dep: progress_label.config(
-                                text=f"Installing {d}..."
-                            ),
-                        )
-
-                        process = subprocess.Popen(
-                            [python_exe, "-m", "pip", "install", dep],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            env=custom_env,
-                            creationflags=subprocess.CREATE_NO_WINDOW
-                            if sys.platform == "win32"
-                            else 0,
-                        )
-
-                        while True:
-                            line = process.stdout.readline()
-                            if not line:
-                                break
-                            if (
-                                "Building wheel" in line
-                                or "pyproject.toml" in line
-                                or "Building wheels" in line
-                            ):
-                                self.root.after(
-                                    0,
-                                    lambda: progress_label.config(
-                                        text="Building llama-cpp-python. Please wait..."
-                                    ),
-                                )
-
-                        process.wait()
-                        if process.returncode != 0:
-                            raise subprocess.CalledProcessError(
-                                process.returncode, process.args
-                            )
-
-                    importlib.invalidate_caches()
-                    self.root.after(0, finish_success)
-                except Exception as e:
-                    err_msg = str(e)
-                    self.root.after(0, lambda: finish_error(err_msg))
-
-            threading.Thread(target=install_thread, daemon=True).start()
-
-        def finish_success():
-            installation_in_progress["active"] = False
-            progress_bar.stop()
-            progress_bar.config(mode="determinate", value=100)
-            progress_label.config(text="Installation completed successfully!")
-            prepare_frozen_python_runtime()
-            messagebox.showinfo(
-                "Setup Complete",
-                "All dependencies have been installed successfully. Starting Lithium IDE.",
-            )
-            setup_win.destroy()
-
-        def is_long_paths_enabled():
-            import winreg
-
-            try:
-                with winreg.OpenKey(
-                    winreg.HKEY_LOCAL_MACHINE,
-                    r"SYSTEM\CurrentControlSet\Control\FileSystem",
-                ) as key:
-                    value, _ = winreg.QueryValueEx(key, "LongPathsEnabled")
-                    return value == 1
             except Exception:
-                return False
-
-        def enable_windows_long_paths():
-            import ctypes
-
-            try:
-                ctypes.windll.shell32.ShellExecuteW(
-                    None,
-                    "runas",
-                    "powershell.exe",
-                    "-Command \"Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\FileSystem' -Name 'LongPathsEnabled' -Value 1\"",
-                    None,
-                    1,
-                )
-                return True
-            except Exception:
-                return False
-
-        def finish_error(err_msg):
-            installation_in_progress["active"] = False
-            progress_bar.stop()
-            progress_bar.config(mode="determinate", value=0)
-            progress_label.config(text="Error during installation.")
-
-            import sys
-
-            if sys.platform == "win32" and not is_long_paths_enabled():
-                if messagebox.askyesno(
-                    "Long Paths Required",
-                    "The installation of llama-cpp-python failed due to the Windows character limit (MAX_PATH).\n\n"
-                    "Would you like Lithium to try enabling long paths automatically? (Requires administrator permissions and a confirmation prompt will appear).",
-                ):
-                    if enable_windows_long_paths():
-                        messagebox.showinfo(
-                            "Request Sent",
-                            "The activation has been requested. Once the Windows permission (UAC) is accepted, restart the IDE and try the installation again.",
-                        )
-                        setup_win.destroy()
-                        self.root.destroy()
-                        sys.exit(0)
-                    else:
-                        messagebox.showerror(
-                            "Error", "Could not request automatic activation."
-                        )
-
-            messagebox.showerror(
-                "Installation Error",
-                f"An error occurred while installing dependencies:\n\n{err_msg}\n\nPlease try manually with: pip install {' '.join(missing)}",
-            )
-            install_btn.config(state="normal")
-
-        setup_win.transient(self.root)
-        setup_win.grab_set()
-        self.root.wait_window(setup_win)
-        self._enable_root()
-        if not self._get_missing_dependencies():
-            self._finish_dependency_setup()
+                pass
+            os._exit(1)
 
     def _init_ai_skills(self):
         """Initialize the AI Skills Executor with editor callbacks."""
@@ -1930,6 +1590,34 @@ Example prompts:
             self.conversation_manager.save_conversation()
 
         threading.Thread(target=self.run_chat_ai, args=(message,), daemon=True).start()
+
+        # Toggle button to Stop mode while AI generates
+        self._ai_stop_event.clear()
+        self._ai_generating = True
+        self.chat_send_btn.config(
+            text=" Stop",
+            image=self.icons.get("stop", ""),
+            compound=tk.LEFT,
+            command=self._stop_ai_generation,
+        )
+
+    def _restore_send_button(self):
+        """Restore the chat send button to its default state."""
+        self._ai_generating = False
+        self.chat_send_btn.config(
+            text="Send",
+            image="",
+            command=self.send_chat_message,
+        )
+
+    def _stop_ai_generation(self):
+        """Stop the current AI generation and restore the send button."""
+        self._ai_stop_event.set()
+        self._restore_send_button()
+        self._remove_loading_indicator()
+        self._cleanup_stream_ui()
+        self.status_label.config(text="AI: Stopped")
+        self.append_to_chat_history("System", "Response stopped by user")
 
     def _build_ai_editor_prompt(self, user_message):
         """Build an AI prompt that includes the current file content with line numbers.
@@ -2347,6 +2035,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                     self._remove_loading_indicator()
                     self._cleanup_stream_ui()
                     self.status_label.config(text="AI: Error")
+                    self._restore_send_button()
                     self.append_to_chat_history(
                         "Error", f"Could not generate response: {state['error']}"
                     )
@@ -2378,6 +2067,11 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                     **inference_params,
                 )
                 for token in gen:
+                    # Check if user requested stop
+                    if self._ai_stop_event.is_set():
+                        with state_lock:
+                            state["done"] = True
+                        return
                     with state_lock:
                         state["full_buffer"] += token
                         self._update_stream_state_from_buffer(state)
@@ -2510,6 +2204,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                 self._original_content_before_ai = None
 
         self.status_label.config(text="AI: Ready")
+        self._restore_send_button()
         self._notify_ai_task_complete()
         self.refresh_conversations_list()
 
@@ -2590,6 +2285,13 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                     f"Model returned empty response after {max_attempts} attempts"
                 )
 
+            # Check if user requested stop during generation
+            if self._ai_stop_event.is_set():
+                self.root.after(0, self._remove_loading_indicator)
+                self.root.after(0, self._restore_send_button)
+                self.root.after(0, lambda: self.status_label.config(text="AI: Stopped"))
+                return
+
             response = self._retry_if_broken_ai_edit_response(
                 prompt, editor_prompt, response
             )
@@ -2669,6 +2371,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                         self._original_content_before_ai = None
 
                 self.status_label.config(text="AI: Ready")
+                self._restore_send_button()
                 self._notify_ai_task_complete()
                 self.refresh_conversations_list()
 
@@ -2677,6 +2380,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             # Schedule removal on main thread (we're in a worker thread)
             self.root.after(0, self._remove_loading_indicator)
             err_msg = str(exc)
+            self.root.after(0, self._restore_send_button)
             self.root.after(
                 0,
                 lambda: self.append_to_chat_history(
@@ -2797,6 +2501,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             self.chat_history.see(tk.END)
             self.chat_history.config(state=tk.DISABLED)
             self.status_label.config(text="AI: Ready")
+            self._restore_send_button()
             self._notify_ai_task_complete()
             return
 
@@ -3792,7 +3497,6 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         if has_file_opened:
             self.editor.config(state=tk.NORMAL)
             self.line_numbers.config(state=tk.NORMAL)
-            self.btn_run.config(state=tk.NORMAL)
 
             if hasattr(self, "chat_input"):
                 self.chat_input.config(state=tk.NORMAL)
@@ -3806,7 +3510,6 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         else:
             self.editor.config(state=tk.DISABLED)
             self.line_numbers.config(state=tk.DISABLED)
-            self.btn_run.config(state=tk.DISABLED)
 
             if hasattr(self, "chat_input"):
                 self.chat_input.config(state=tk.DISABLED)

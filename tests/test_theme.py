@@ -64,7 +64,7 @@ class TestDefaultGraphite:
 
 class TestFonts:
     def test_fonts_dict_has_required_keys(self):
-        assert set(FONTS.keys()) == {"ui", "header", "editor", "console"}
+        assert set(FONTS.keys()) == {"ui", "header", "editor"}
 
     def test_every_font_is_tuple(self):
         for key, value in FONTS.items():

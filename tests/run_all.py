@@ -31,7 +31,6 @@ def main():
         "tests/test_settings.py",
         "tests/test_theme.py",
         "tests/test_syntax_rules.py",
-        "tests/test_runner.py",
         "tests/test_utils.py",
         "tests/test_base.py",
     ]
