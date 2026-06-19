@@ -362,17 +362,9 @@ class LithiumIDE:
 
         self.create_menu()
 
-        self.controller.load_cache()
         self.controller.update_line_numbers()
         self.controller.update_status()
         self.update_editor_ai_state()
-
-        last_folder = self.settings_manager.get("last_folder")
-        if last_folder and os.path.isdir(last_folder):
-            try:
-                self.file_explorer.load_folder(last_folder)
-            except Exception:
-                pass
 
         lang = self.selected_lang.get()
         icon_key = lang.lower()
@@ -552,6 +544,14 @@ class LithiumIDE:
 
         self.chat_visible = True
         self.center_right_paned.add(self.chat_frame, minsize=450, width=500)
+
+        # Re-apply enabled/disabled state now that all chat widgets exist
+        self.update_editor_ai_state()
+
+        # Bind click events on disabled widgets to flash the File button
+        self.editor.bind("<Button-1>", self._on_disabled_area_click, add="+")
+        self.chat_input.bind("<Button-1>", self._on_disabled_area_click, add="+")
+        self.chat_history.bind("<Button-1>", self._on_disabled_area_click, add="+")
 
         threading.Thread(target=self.load_languages_async, daemon=True).start()
 
@@ -765,7 +765,7 @@ class LithiumIDE:
         lang = self.selected_lang.get()
         self.editor_label.config(text=f"EDITOR ({lang.upper()})")
         self.controller.update_status()
-        self.controller.save_cache()
+        self.controller._save_language_preference()
         icon_key = lang.lower()
         if icon_key not in self.icons:
             icon_key = "generic"
@@ -3057,6 +3057,44 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                 messagebox.showinfo("Export", "Conversation exported successfully!")
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to export: {e}")
+
+    def _on_disabled_area_click(self, event):
+        """Flash the File button when user clicks on a disabled area."""
+        if self.controller.file_path is None and not self.file_or_folder_opened:
+            self._flash_file_button()
+
+    def _flash_file_button(self):
+        """Blink the File button to suggest opening a file.
+        Only one animation runs at a time.
+        """
+        if not hasattr(self, "btn_file"):
+            return
+        # Cancel any previous animation
+        if hasattr(self, "_flash_after_id"):
+            try:
+                self.root.after_cancel(self._flash_after_id)
+            except Exception:
+                pass
+        self._flash_after_id = None
+
+        # Restore original colors immediately
+        original_bg = theme.COLORS["bg_header"]
+        original_fg = theme.COLORS["fg_light"]
+        highlight_bg = theme.COLORS["accent"]
+        highlight_fg = theme.COLORS["bg_dark"]
+
+        def blink(count=0):
+            if count >= 8:  # 4 on/off cycles
+                self.btn_file.config(bg=original_bg, fg=original_fg)
+                self._flash_after_id = None
+                return
+            if count % 2 == 0:
+                self.btn_file.config(bg=highlight_bg, fg=highlight_fg)
+            else:
+                self.btn_file.config(bg=original_bg, fg=original_fg)
+            self._flash_after_id = self.root.after(180, lambda: blink(count + 1))
+
+        blink()
 
     def update_editor_ai_state(self):
         """Update the enabled/disabled state of editor and AI features based on whether a file is opened."""

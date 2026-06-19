@@ -131,7 +131,7 @@ class LithiumEditorController:
                     file.write(self.editor.get(1.0, tk.END))
                 self.mark_clean()
                 self.update_status()
-                self.save_cache()
+                self.settings_manager.set("language", self.selected_lang.get())
                 return True
             except Exception:
                 return False
@@ -157,7 +157,7 @@ class LithiumEditorController:
                 file.write(self.editor.get(1.0, tk.END))
             self.editor.edit_modified(False)
             self.update_line_numbers()
-            self.save_cache()
+            self.settings_manager.set("language", self.selected_lang.get())
             if self.on_file_open_callback:
                 self.on_file_open_callback()
             self.mark_clean()
@@ -166,29 +166,8 @@ class LithiumEditorController:
             return True
         return False
 
-    def save_cache(self):
+    def _save_language_preference(self):
         try:
-            self.settings_manager.set("last_file", self.file_path)
             self.settings_manager.set("language", self.selected_lang.get())
-        except Exception:
-            pass
-
-    def load_cache(self):
-        try:
-            lang = self.settings_manager.get("language")
-            if lang:
-                self.selected_lang.set(lang)
-                self.editor_label.config(text=f"EDITOR ({lang.upper()})")
-
-            last_file = self.settings_manager.get("last_file")
-            if last_file and os.path.exists(last_file):
-                self.file_path = last_file
-                with open(last_file, "r", encoding="utf-8") as f_content:
-                    code = f_content.read()
-                    self.editor.delete(1.0, tk.END)
-                    self.editor.insert(1.0, code)
-                self.root.title(f"{os.path.basename(last_file)} - Lithium IDE")
-                self.update_line_numbers()
-                self.update_status()
         except Exception:
             pass
