@@ -295,7 +295,9 @@ def _get_cached_model(cache_key, factory):
         cached_model = _model_cache.get(cache_key)
 
     if cached_model is None:
-        raise RuntimeError("Model initialization did not complete successfully.")
+        raise RuntimeError(
+            "Model initialization failed because another thread hit an error while loading the model."
+        )
 
     return cached_model
 
