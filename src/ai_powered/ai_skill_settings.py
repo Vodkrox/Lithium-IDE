@@ -112,7 +112,10 @@ class AISkillSettings:
 
         if self.get("reasoning"):
             parts.append(
-                "Reason step by step before proposing changes. You may include a short reasoning section."
+                "You MUST reason step by step before giving your final answer. "
+                "Put your step-by-step reasoning inside <think>...</think> XML tags. "
+                "After you close </think>, output your final response. "
+                "This is REQUIRED, not optional."
             )
 
         if self.get("explain_actions"):

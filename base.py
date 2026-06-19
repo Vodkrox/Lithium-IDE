@@ -1,3 +1,4 @@
+import difflib
 import json
 import os
 import sys
@@ -317,6 +318,10 @@ class LithiumIDE:
         self.ai_skills_executor = None
         self._init_ai_skills()
         self._pending_retry_info = None  # (prompt, retry_count) for reject-and-retry
+        self._original_content_before_ai = (
+            None  # Original editor content before AI changes
+        )
+        self._approval_bar = None  # Approval bar frame widget
 
         if self.ai_model_link:
             self.status_label.config(text=f"AI: configured model {self.ai_model_link}")
@@ -1230,10 +1235,22 @@ Example prompts:
                     theme.COLORS["error"],
                 ):
                     widget.config(fg=theme.COLORS["fg_dim"])
+            elif isinstance(widget, tk.Text):
+                widget.config(
+                    bg=theme.COLORS["bg_editor"],
+                    fg=theme.COLORS["fg_dim"],
+                )
             elif isinstance(widget, tk.Button):
                 text = widget.cget("text")
                 if "Approve" in text or "Apply" in text or "Aprobar" in text:
                     widget.config(bg=theme.COLORS["accent"], fg=theme.COLORS["bg_dark"])
+                elif "reasoning" in text.lower():
+                    widget.config(
+                        bg=theme.COLORS["bg_editor"],
+                        fg=theme.COLORS["fg_dim"],
+                        activebackground=theme.COLORS["bg_dark"],
+                        activeforeground=theme.COLORS["accent"],
+                    )
                 else:
                     widget.config(
                         bg=theme.COLORS["sash_color"], fg=theme.COLORS["fg_light"]
@@ -1898,6 +1915,9 @@ Example prompts:
         if not message:
             return
 
+        # Hide any pending approval bar when starting a new request
+        self._hide_approval_bar()
+
         self.chat_input.delete("1.0", tk.END)
         self.append_to_chat_history("You", message)
 
@@ -1946,18 +1966,42 @@ Project files (relative paths):
 Project scope: you may modify files anywhere under the opened folder tree.
 """
 
+        reasoning_instruction = ""
+        if self.ai_skill_settings.get("reasoning"):
+            reasoning_instruction = (
+                "IMPORTANT: You MUST reason step by step about what the user needs "
+                "BEFORE emitting any skill XML. Put your reasoning inside <think>...</think> "
+                "XML tags, and keep them BEFORE any <skill> blocks.\n"
+                "Example:\n"
+                "<think>The user wants to add error handling. I need to wrap the main logic in a try/except block.</think>\n"
+                '<skill name="edit_lines">...</skill>\n'
+                "This is REQUIRED - you MUST include a <think> section before the <skill> blocks.\n"
+            )
+
         if self.ai_skill_settings.get("explain_actions"):
             edit_output_rule = (
                 "- If the user request requires editing, use one or more <skill ...> XML blocks.\n"
                 "- You may include a brief explanation of what you are doing."
             )
         else:
-            edit_output_rule = (
-                "- If the user request requires editing the file, respond ONLY with one or more <skill ...> XML blocks.\n"
-                "- Do NOT explain what XML tags are.\n"
-                '- Do NOT say "propose the changes".\n'
-                "- Do NOT describe the changes in prose instead of using skills."
-            )
+            if self.ai_skill_settings.get("reasoning"):
+                # When reasoning is active, explicitly allow <think> tags before skill blocks
+                edit_output_rule = (
+                    "- If the user request requires editing the file, you MUST respond with "
+                    "one or more <skill ...> XML blocks.\n"
+                    "- CRITICAL: You MUST include a <think>...</think> section with your "
+                    "step-by-step reasoning BEFORE the <skill> blocks.\n"
+                    "- Do NOT explain what XML tags are.\n"
+                    '- Do NOT say "propose the changes".\n'
+                    "- Do NOT describe the changes in prose instead of using skills."
+                )
+            else:
+                edit_output_rule = (
+                    "- If the user request requires editing the file, respond ONLY with one or more <skill ...> XML blocks.\n"
+                    "- Do NOT explain what XML tags are.\n"
+                    '- Do NOT say "propose the changes".\n'
+                    "- Do NOT describe the changes in prose instead of using skills."
+                )
 
         scope_rule = (
             "- All modifications must target only the currently open file and must be expressed with skill XML tags so the user can approve them."
@@ -1978,7 +2022,7 @@ Current open file content with line numbers:
 ```
 {workspace_section}
 OUTPUT CONTRACT
-{edit_output_rule}
+{reasoning_instruction}{edit_output_rule}
 - If the current content would make the final file invalid, first emit delete_lines for the invalid/unrelated lines, then emit add_lines with the corrected code.
 - If the whole file is invalid or contains unrelated text, use replace_file to replace the entire file content.
 - Do not just append code if existing text/code would prevent compilation.
@@ -2081,10 +2125,428 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             daemon=True,
         ).start()
 
+    @staticmethod
+    def _extract_reasoning(response: str):
+        """Extract reasoning content from a model response.
+
+        Looks for <think>...</think> or <reasoning>...</reasoning> tags
+        and returns (reasoning_text, cleaned_response).
+        If the entire response is reasoning, both values hold the content.
+
+        As a fallback, if the response starts with narrative text before any
+        skill XML tag, that narrative is treated as implicit reasoning.
+        """
+        import re
+
+        def _try_extract(pattern, text):
+            match = pattern.search(text)
+            if match:
+                reasoning = match.group(1).strip()
+                cleaned = pattern.sub("", text).strip()
+                if not cleaned and reasoning:
+                    return reasoning, reasoning
+                return reasoning, cleaned
+            return None, text
+
+        # Try <think>...</think> (used by DeepSeek R1, QwQ, etc.)
+        pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
+        reasoning, cleaned = _try_extract(pattern, response)
+        if reasoning is not None:
+            return reasoning, cleaned
+
+        # Try <reasoning>...</reasoning> (generic fallback)
+        pattern2 = re.compile(
+            r"<reasoning>(.*?)</reasoning>", re.DOTALL | re.IGNORECASE
+        )
+        reasoning, cleaned = _try_extract(pattern2, response)
+        if reasoning is not None:
+            return reasoning, cleaned
+
+        # Fallback 1: narrative text before the first <skill tag is implicit reasoning
+        skill_start = re.search(r"\<skill\b", response, re.IGNORECASE)
+        if skill_start and skill_start.start() > 0:
+            before_skill = response[: skill_start.start()].strip()
+            if before_skill:
+                # Only treat as reasoning if it looks analytical (multiple sentences/thoughts)
+                word_count = len(before_skill.split())
+                if word_count >= 5 and (
+                    before_skill.count(".") >= 1 or "\n" in before_skill
+                ):
+                    return before_skill, response[skill_start.start() :].strip()
+
+        # Fallback 2: narrative text before the first markdown code block
+        code_block_start = re.search(r"```\w*", response)
+        if code_block_start and code_block_start.start() > 0:
+            before_code = response[: code_block_start.start()].strip()
+            if before_code:
+                word_count = len(before_code.split())
+                if word_count >= 5 and (
+                    before_code.count(".") >= 1 or "\n" in before_code
+                ):
+                    return before_code, response[code_block_start.start() :].strip()
+
+        # Fallback 3: if the entire response is just one line of short text, it's not reasoning
+        return None, response
+
+    def _can_stream(self):
+        """Check if streaming generation is possible with current setup."""
+        if not getattr(self, "ai_model_link", None):
+            return False
+        if not self.ai_skill_settings.get("reasoning"):
+            return False
+        # Check if it's a GGUF model (llama.cpp supports streaming)
+        try:
+            resolved = ai_runner.resolve_model_source(self.ai_model_link)
+            if not resolved:
+                return False
+            gguf_path = ai_runner._find_gguf_path(resolved)
+            if not gguf_path:
+                return False
+            # Verify llama-cpp is available
+            Llama = ai_runner._safe_import_llama_cpp()
+            return Llama is not None
+        except Exception:
+            return False
+
+    def _stream_ai_response(self, prompt):
+        """Run AI with streaming, showing reasoning tokens in real-time."""
+        self.root.after(0, lambda: self.status_label.config(text="AI: Reasoning..."))
+
+        # Show the standard loading indicator immediately so there's visual feedback
+        # NOTE: Must use root.after() because we're in a worker thread
+        self.root.after(0, self._show_loading_indicator)
+
+        editor_prompt = self._build_ai_editor_prompt(prompt)
+        inference_params = dict(self.ai_inference_params)
+        base_tokens = inference_params.get("max_tokens", 768)
+        inference_params["max_tokens"] = int(base_tokens * 1.35)
+
+        # Shared state between threads
+        state = {
+            "full_buffer": "",
+            "reasoning": "",
+            "response": "",
+            "has_think_tag": False,
+            "reasoning_done": False,
+            "done": False,
+            "error": None,
+        }
+        state_lock = threading.Lock()
+
+        # --- Create reasoning widget only when <think> is first detected ---
+        reasoning_created = [False]
+
+        def create_reasoning_widget():
+            """Create the collapsible '💭 Show reasoning' live widget (main thread)."""
+            if reasoning_created[0]:
+                return
+            reasoning_created[0] = True
+
+            self.chat_history.config(state=tk.NORMAL)
+            bg = theme.COLORS.get("bg_editor", "#080808")
+            bg_dark = theme.COLORS.get("bg_dark", "#000000")
+            fg_dim = theme.COLORS.get("fg_dim", "#7D8794")
+            accent = theme.COLORS.get("accent", "#cba6f7")
+
+            frame = tk.Frame(self.chat_history, bg=bg)
+
+            # Toggle state: collapsed by default
+            visible = [False]
+
+            widget = tk.Text(
+                frame,
+                wrap=tk.WORD,
+                font=("DejaVu Sans", 9),
+                fg=fg_dim,
+                bg=bg_dark,
+                bd=0,
+                highlightthickness=0,
+                height=3,
+                padx=8,
+                pady=4,
+                relief=tk.FLAT,
+            )
+            # Start hidden
+
+            def toggle_reasoning():
+                if visible[0]:
+                    widget.pack_forget()
+                    toggle_btn.config(text="💭 Show reasoning")
+                else:
+                    widget.pack(fill=tk.X, padx=2, pady=(2, 6))
+                    toggle_btn.config(text="💭 Hide reasoning")
+                    # Auto-scroll to show latest tokens
+                    try:
+                        widget.see(tk.END)
+                    except Exception:
+                        pass
+                visible[0] = not visible[0]
+
+            toggle_btn = tk.Button(
+                frame,
+                text="💭 Show reasoning",
+                font=("DejaVu Sans", 9),
+                fg=fg_dim,
+                bg=bg,
+                bd=0,
+                activebackground=bg_dark,
+                activeforeground=accent,
+                cursor="hand2",
+                command=toggle_reasoning,
+                anchor=tk.W,
+                padx=4,
+                pady=2,
+            )
+            toggle_btn.pack(fill=tk.X)
+
+            self.chat_history.window_create(tk.END, window=frame)
+            self.chat_history.insert(tk.END, "\n")
+            self.chat_history.see(tk.END)
+            self.chat_history.config(state=tk.DISABLED)
+
+            self._stream_reasoning_widget = widget
+            self._stream_reasoning_frame = frame
+            self._stream_reasoning_visible = visible
+            self._stream_reasoning_toggle = toggle_btn
+
+        auto_expanded = [False]
+
+        def update_reasoning_widget(text):
+            """Update the reasoning widget content (main thread)."""
+            if not reasoning_created[0]:
+                return
+            try:
+                w = self._stream_reasoning_widget
+                # Auto-expand the first time reasoning content arrives
+                if (
+                    not auto_expanded[0]
+                    and hasattr(self, "_stream_reasoning_visible")
+                    and self._stream_reasoning_visible
+                ):
+                    visible = self._stream_reasoning_visible
+                    if not visible[0]:
+                        # Programmatically expand
+                        if hasattr(self, "_stream_reasoning_toggle"):
+                            self._stream_reasoning_toggle.invoke()
+                    auto_expanded[0] = True
+
+                w.config(state=tk.NORMAL)
+                w.delete("1.0", tk.END)
+                w.insert("1.0", text)
+                w.config(state=tk.DISABLED)
+                w.see(tk.END)
+                lines = text.count("\n") + 1
+                w.config(height=min(max(lines, 3), 15))
+            except Exception:
+                pass
+
+        # --- Periodic UI update (main thread) ---
+        def poll_ui():
+            with state_lock:
+                if state["error"]:
+                    self._remove_loading_indicator()
+                    self._cleanup_stream_ui()
+                    self.status_label.config(text="AI: Error")
+                    self.append_to_chat_history(
+                        "Error", f"Could not generate response: {state['error']}"
+                    )
+                    return
+
+                reasoning = state["reasoning"]
+                done = state["done"]
+
+            # Create reasoning widget on first detection of <think>
+            if reasoning and not reasoning_created[0]:
+                self.root.after(0, create_reasoning_widget)
+
+            # Live-update reasoning widget
+            if reasoning and reasoning_created[0]:
+                update_reasoning_widget(reasoning)
+
+            if not done:
+                self.root.after(100, poll_ui)
+            else:
+                self._finalize_stream_response(state, state_lock)
+
+        # --- Streaming thread ---
+        def streaming_worker():
+            try:
+                gen = ai_runner.stream_generate_text(
+                    self.ai_model_link,
+                    self.ai_system_prompt,
+                    editor_prompt,
+                    **inference_params,
+                )
+                for token in gen:
+                    with state_lock:
+                        state["full_buffer"] += token
+                        self._update_stream_state_from_buffer(state)
+
+                with state_lock:
+                    state["done"] = True
+            except Exception as e:
+                with state_lock:
+                    state["error"] = str(e)
+                    state["done"] = True
+
+        # Start polling & streaming
+        self.root.after(100, poll_ui)
+        threading.Thread(target=streaming_worker, daemon=True).start()
+
+    def _update_stream_state_from_buffer(self, state):
+        """Parse the full buffer to extract reasoning/response state.
+
+        Called with state_lock held.
+        """
+        buf = state["full_buffer"]
+
+        if "</think>" in buf:
+            # Reasoning complete
+            parts = buf.split("</think>", 1)
+            before_close = parts[0]
+            state["response"] = parts[1]
+            state["reasoning_done"] = True
+            # Extract reasoning content
+            if "<think>" in before_close:
+                _, reasoning = before_close.split("<think>", 1)
+                state["reasoning"] = reasoning
+            else:
+                state["reasoning"] = before_close
+            state["has_think_tag"] = True
+        elif "<think>" in buf:
+            # Inside reasoning
+            parts = buf.split("<think>", 1)
+            state["reasoning"] = parts[1]
+            state["has_think_tag"] = True
+            # Text before <think> is pre-reasoning response
+            before = parts[0].strip()
+            if before:
+                state["response"] = before
+        else:
+            # No reasoning tags yet
+            state["reasoning_done"] = False
+            state["reasoning"] = ""
+            state["response"] = buf
+
+    def _finalize_stream_response(self, state, state_lock):
+        """Called when streaming is done — process skills and finalize UI."""
+        with state_lock:
+            reasoning_text = state["reasoning"]
+            full_response = state["response"]
+            full_buffer = state["full_buffer"]
+            error = state["error"]
+
+        self._remove_loading_indicator()
+        self._cleanup_stream_ui()
+
+        if error:
+            self.status_label.config(text="AI: Error")
+            self.append_to_chat_history(
+                "Error", f"Could not generate response: {error}"
+            )
+            return
+
+        # Post-processing fallback: if streaming didn't detect <think> tags,
+        # try the same extraction logic used by the non-streaming path
+        if not reasoning_text:
+            reasoning_text, full_response = self._extract_reasoning(full_buffer)
+
+        # If response is empty but reasoning has content, show reasoning as response
+        if not full_response.strip() and reasoning_text:
+            full_response = reasoning_text
+            reasoning_text = ""
+
+        # Process skills (same as non-streaming path)
+        skill_results = []
+        pending_approvals = []
+        clean_response = full_response
+        if self.ai_skills_executor:
+            try:
+                skill_results = self.ai_skills_executor.parse_for_preview(full_response)
+                clean_response = self.ai_skills_executor.get_clean_response(
+                    full_response
+                )
+                for i, (sn, result) in enumerate(skill_results):
+                    if result.requires_approval and result.success:
+                        pending_approvals.append((i, sn, result))
+            except Exception as skill_err:
+                print(f"Warning: Error processing AI skills: {skill_err}")
+
+        # Save original content before applying any changes
+        original_content = self.editor.get("1.0", tk.END) if pending_approvals else None
+
+        # Apply ALL pending skills immediately (no per-skill approval)
+        if pending_approvals and self.ai_skills_executor:
+            for idx, sn, result in pending_approvals:
+                apply_result = self.ai_skills_executor.apply_skill(sn, result)
+                skill_results[idx] = (sn, apply_result)
+
+        # Save to conversation
+        if self.conversation_manager.current_conversation and clean_response.strip():
+            metadata = {}
+            if reasoning_text:
+                metadata["reasoning"] = reasoning_text
+            self.conversation_manager.current_conversation.add_message(
+                "assistant", clean_response, metadata=metadata
+            )
+            self.conversation_manager.save_conversation()
+
+        # Show skill results in chat
+        for sn, result in skill_results:
+            icon = "✓" if result.success else "✗"
+            self.append_to_chat_history("Skill", f"{icon} {result.message}")
+
+        if clean_response.strip():
+            self.append_to_chat_history("AI", clean_response, reasoning=reasoning_text)
+
+        # Show unified approval bar if there were editor changes
+        if original_content is not None:
+            new_content = self.editor.get("1.0", tk.END)
+            added, removed = self._compute_diff_stats(original_content, new_content)
+            if added > 0 or removed > 0:
+                self._show_approval_bar(original_content, new_content, added, removed)
+            else:
+                # No actual changes detected, clean up
+                self._original_content_before_ai = None
+
+        self.status_label.config(text="AI: Ready")
+        self._notify_ai_task_complete()
+        self.refresh_conversations_list()
+
+    def _cleanup_stream_ui(self):
+        """Remove streaming UI widgets."""
+        for attr in (
+            "_stream_reasoning_widget",
+            "_stream_reasoning_frame",
+            "_stream_reasoning_toggle",
+        ):
+            if hasattr(self, attr):
+                try:
+                    obj = getattr(self, attr)
+                    if obj and obj.winfo_exists():
+                        obj.destroy()
+                except Exception:
+                    pass
+                delattr(self, attr)
+        for attr in ("_stream_reasoning_visible",):
+            if hasattr(self, attr):
+                delattr(self, attr)
+
     def run_chat_ai(self, prompt, is_retry=False):
+        # Use streaming path when reasoning skill is active and possible
+        if not is_retry and self._can_stream():
+            try:
+                self._stream_ai_response(prompt)
+                return
+            except Exception as stream_err:
+                print(f"Streaming failed, falling back to normal mode: {stream_err}")
+                self._cleanup_stream_ui()
+                # Fall through to non-streaming path
+
         self.root.after(0, lambda: self.status_label.config(text="AI: Loading..."))
 
-        self._show_loading_indicator()
+        # NOTE: Must use root.after() because we're in a worker thread
+        self.root.after(0, self._show_loading_indicator)
 
         if not is_retry:
             self._pending_retry_info = (prompt, 0)
@@ -2132,16 +2594,22 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                 prompt, editor_prompt, response
             )
 
-            self._remove_loading_indicator()
+            # Extract reasoning before skill processing
+            reasoning_text, response_no_reasoning = self._extract_reasoning(response)
+
+            # Schedule removal on main thread (we're in a worker thread)
+            self.root.after(0, self._remove_loading_indicator)
 
             skill_results = []
             pending_approvals = []
-            clean_response = response
+            clean_response = response_no_reasoning
             if self.ai_skills_executor:
                 try:
-                    skill_results = self.ai_skills_executor.parse_for_preview(response)
+                    skill_results = self.ai_skills_executor.parse_for_preview(
+                        response_no_reasoning
+                    )
                     clean_response = self.ai_skills_executor.get_clean_response(
-                        response
+                        response_no_reasoning
                     )
 
                     for i, (skill_name, result) in enumerate(skill_results):
@@ -2150,50 +2618,64 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                 except Exception as skill_err:
                     print(f"Warning: Error processing AI skills: {skill_err}")
 
-            if (
-                pending_approvals
-                and self.ai_skill_settings.get("auto_approve")
-                and self.ai_skills_executor
-            ):
+            # Save original content before applying any changes
+            original_content = (
+                self.editor.get("1.0", tk.END) if pending_approvals else None
+            )
+
+            # Apply ALL pending skills immediately (no per-skill approval)
+            if pending_approvals and self.ai_skills_executor:
                 for result_idx, skill_name, result in pending_approvals:
                     apply_result = self.ai_skills_executor.apply_skill(
                         skill_name, result
                     )
                     skill_results[result_idx] = (skill_name, apply_result)
-                pending_approvals = []
 
             def show_response():
                 if (
                     self.conversation_manager.current_conversation
                     and clean_response.strip()
                 ):
+                    metadata = {}
+                    if reasoning_text:
+                        metadata["reasoning"] = reasoning_text
                     self.conversation_manager.current_conversation.add_message(
-                        "assistant", clean_response
+                        "assistant", clean_response, metadata=metadata
                     )
                     self.conversation_manager.save_conversation()
 
-                if pending_approvals:
-                    self._show_approval_dialog(
-                        0, pending_approvals, skill_results, clean_response
+                for skill_name, result in skill_results:
+                    status_icon = "✓" if result.success else "✗"
+                    self.append_to_chat_history(
+                        "Skill", f"{status_icon} {result.message}"
                     )
-                else:
-                    for skill_name, result in skill_results:
-                        status_icon = "✓" if result.success else "✗"
-                        self.append_to_chat_history(
-                            "Skill", f"{status_icon} {result.message}"
+
+                if clean_response.strip():
+                    self.append_to_chat_history(
+                        "AI", clean_response, reasoning=reasoning_text
+                    )
+
+                # Show unified approval bar if there were editor changes
+                if original_content is not None:
+                    new_content = self.editor.get("1.0", tk.END)
+                    added, removed = self._compute_diff_stats(
+                        original_content, new_content
+                    )
+                    if added > 0 or removed > 0:
+                        self._show_approval_bar(
+                            original_content, new_content, added, removed
                         )
+                    else:
+                        self._original_content_before_ai = None
 
-                    if clean_response.strip():
-                        self.append_to_chat_history("AI", clean_response)
-
-                    self.status_label.config(text="AI: Ready")
-                    self._notify_ai_task_complete()
-
-                    self.refresh_conversations_list()
+                self.status_label.config(text="AI: Ready")
+                self._notify_ai_task_complete()
+                self.refresh_conversations_list()
 
             self.root.after(0, show_response)
         except Exception as exc:
-            self._remove_loading_indicator()
+            # Schedule removal on main thread (we're in a worker thread)
+            self.root.after(0, self._remove_loading_indicator)
             err_msg = str(exc)
             self.root.after(
                 0,
@@ -2286,7 +2768,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                 delattr(self, attr)
 
     def _show_approval_dialog(
-        self, index, pending_approvals, all_results, clean_response
+        self, index, pending_approvals, all_results, clean_response, reasoning=None
     ):
         """Show approval dialog inline in the chat for pending skill changes."""
         if index >= len(pending_approvals):
@@ -2310,7 +2792,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
 
             if clean_response.strip():
                 self.chat_history.insert(tk.END, "\n")
-                self.append_to_chat_history("AI", clean_response)
+                self.append_to_chat_history("AI", clean_response, reasoning=reasoning)
 
             self.chat_history.see(tk.END)
             self.chat_history.config(state=tk.DISABLED)
@@ -2506,11 +2988,152 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         self.chat_history.see(tk.END)
         self.chat_history.config(state=tk.DISABLED)
 
+    def _compute_diff_stats(self, original, new):
+        """Compute added and removed line counts between two texts."""
+        orig_lines = original.splitlines(keepends=True)
+        new_lines = new.splitlines(keepends=True)
+
+        matcher = difflib.SequenceMatcher(None, orig_lines, new_lines)
+        added = 0
+        removed = 0
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "replace":
+                removed += i2 - i1
+                added += j2 - j1
+            elif tag == "delete":
+                removed += i2 - i1
+            elif tag == "insert":
+                added += j2 - j1
+        return added, removed
+
+    def _show_approval_bar(self, original_content, new_content, added, removed):
+        """Show a unified approve/reject bar above the chat input with line diff stats."""
+        if self._approval_bar is not None:
+            try:
+                self._approval_bar.destroy()
+            except Exception:
+                pass
+            self._approval_bar = None
+
+        self._original_content_before_ai = original_content
+
+        bg = theme.COLORS.get("bg_dark", "#0B0D10")
+        accent = theme.COLORS.get("accent", "#7C9EFF")
+        success = theme.COLORS.get("success", "#A3BE8C")
+        error = theme.COLORS.get("error", "#F07178")
+        fg = theme.COLORS.get("fg_light", "#E5E9F0")
+        fg_dim = theme.COLORS.get("fg_dim", "#8F99A6")
+
+        bar = tk.Frame(
+            self.chat_input_container,
+            bg=bg,
+            bd=1,
+            relief=tk.FLAT,
+            highlightbackground=theme.COLORS.get("sash_color", "#1F2833"),
+            highlightthickness=1,
+        )
+
+        # Diff stats label: +N -M
+        diff_label = tk.Label(
+            bar,
+            text=f"+{added}  −{removed}",
+            font=("DejaVu Sans Mono", 11, "bold"),
+            fg=success if added > 0 else error,
+            bg=bg,
+            padx=10,
+        )
+        diff_label.pack(side=tk.LEFT, padx=(10, 5), pady=6)
+
+        # Separator
+        sep = tk.Frame(bar, bg=theme.COLORS.get("sash_color", "#1F2833"), width=1)
+        sep.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=4)
+
+        # Description
+        desc_label = tk.Label(
+            bar,
+            text="AI changes:",
+            font=("DejaVu Sans", 9),
+            fg=fg_dim,
+            bg=bg,
+        )
+        desc_label.pack(side=tk.LEFT, padx=(5, 5), pady=6)
+
+        # Approve button
+        approve_btn = tk.Button(
+            bar,
+            text="✓ Approve",
+            font=("DejaVu Sans", 9, "bold"),
+            bg=success,
+            fg=theme.COLORS.get("bg_dark", "#0B0D10"),
+            bd=0,
+            padx=14,
+            pady=3,
+            cursor="hand2",
+            command=lambda: self._on_approve_bar_approve(),
+            activebackground=theme.COLORS.get("success_hover", "#8FBC7A"),
+            activeforeground=theme.COLORS.get("bg_dark", "#0B0D10"),
+            relief=tk.FLAT,
+        )
+        approve_btn.pack(side=tk.RIGHT, padx=(5, 5), pady=4)
+
+        # Reject button
+        reject_btn = tk.Button(
+            bar,
+            text="✗ Reject",
+            font=("DejaVu Sans", 9),
+            bg=theme.COLORS.get("sash_color", "#1F2833"),
+            fg=fg,
+            bd=0,
+            padx=14,
+            pady=3,
+            cursor="hand2",
+            command=lambda: self._on_approve_bar_reject(),
+            activebackground=theme.COLORS.get("sash_color", "#1F2833"),
+            activeforeground=accent,
+            relief=tk.FLAT,
+        )
+        reject_btn.pack(side=tk.RIGHT, padx=(0, 5), pady=4)
+
+        # Pack at the TOP of chat_input_container so it appears above everything else
+        bar.pack(side=tk.TOP, fill=tk.X, padx=0, pady=(0, 5))
+        bar.pack_propagate(False)
+        bar.configure(height=34)
+
+        self._approval_bar = bar
+
+    def _hide_approval_bar(self):
+        """Remove the approval bar from the chat input area."""
+        if self._approval_bar is not None:
+            try:
+                self._approval_bar.destroy()
+            except Exception:
+                pass
+            self._approval_bar = None
+        self._original_content_before_ai = None
+
+    def _on_approve_bar_approve(self):
+        """User approved the AI changes — keep them and hide the bar."""
+        self._hide_approval_bar()
+        self.status_label.config(text="AI: Changes approved")
+
+    def _on_approve_bar_reject(self):
+        """User rejected the AI changes — restore original editor content."""
+        if self._original_content_before_ai is not None:
+            try:
+                self.editor.delete("1.0", tk.END)
+                self.editor.insert("1.0", self._original_content_before_ai)
+                self.controller.update_line_numbers()
+                self.controller.update_status()
+                self.status_label.config(text="AI: Changes reverted")
+            except Exception as e:
+                print(f"Error reverting AI changes: {e}")
+        self._hide_approval_bar()
+
     def _get_skill_name_from_result(self, result_idx, all_results):
         """Get skill name from result index (simplified - in real impl would track names)."""
         return "unknown"
 
-    def append_to_chat_history(self, sender, text):
+    def append_to_chat_history(self, sender, text, reasoning=None):
         self.chat_history.config(state=tk.NORMAL)
 
         color = (
@@ -2525,6 +3148,10 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         self.chat_history.tag_config(
             "sender_tag_" + sender, foreground=color, font=("DejaVu Sans", 10, "bold")
         )
+
+        # Insert collapsible reasoning section if present
+        if reasoning:
+            self._insert_reasoning_section(reasoning)
 
         parts = text.split("```")
         for i, part in enumerate(parts):
@@ -2638,6 +3265,64 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
 
         self.chat_history.see(tk.END)
         self.chat_history.config(state=tk.DISABLED)
+
+    def _insert_reasoning_section(self, reasoning_text):
+        """Insert a collapsible reasoning section into the chat history."""
+        bg = theme.COLORS.get("bg_editor", "#080808")
+        bg_dark = theme.COLORS.get("bg_dark", "#000000")
+        fg_dim = theme.COLORS.get("fg_dim", "#7D8794")
+        accent = theme.COLORS.get("accent", "#cba6f7")
+
+        frame = tk.Frame(self.chat_history, bg=bg)
+
+        # Toggle state
+        visible = [False]
+
+        # Reasoning text widget (hidden initially)
+        reasoning_widget = tk.Text(
+            frame,
+            wrap=tk.WORD,
+            font=("DejaVu Sans", 9),
+            fg=fg_dim,
+            bg=bg_dark,
+            bd=0,
+            highlightthickness=0,
+            height=min(len(reasoning_text.splitlines()) + 1, 12),
+            padx=8,
+            pady=6,
+            relief=tk.FLAT,
+        )
+        reasoning_widget.insert("1.0", reasoning_text)
+        reasoning_widget.config(state=tk.DISABLED)
+
+        def toggle_reasoning():
+            if visible[0]:
+                reasoning_widget.pack_forget()
+                toggle_btn.config(text="💭 Show reasoning")
+            else:
+                reasoning_widget.pack(fill=tk.X, padx=2, pady=(2, 4))
+                toggle_btn.config(text="💭 Hide reasoning")
+            visible[0] = not visible[0]
+
+        toggle_btn = tk.Button(
+            frame,
+            text="💭 Show reasoning",
+            font=("DejaVu Sans", 9),
+            fg=fg_dim,
+            bg=bg,
+            bd=0,
+            activebackground=bg_dark,
+            activeforeground=accent,
+            cursor="hand2",
+            command=toggle_reasoning,
+            anchor=tk.W,
+            padx=4,
+            pady=2,
+        )
+        toggle_btn.pack(fill=tk.X)
+
+        self.chat_history.window_create(tk.END, window=frame)
+        self.chat_history.insert(tk.END, "\n")
 
     def apply_suggested_code(self, code):
         try:
@@ -2926,7 +3611,11 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                 sender = "You"
             elif role == "assistant":
                 sender = "AI"
-            self.append_to_chat_history(sender, content)
+            metadata = msg.get("metadata", {}) or {}
+            reasoning = (
+                metadata.get("reasoning") if isinstance(metadata, dict) else None
+            )
+            self.append_to_chat_history(sender, content, reasoning=reasoning)
 
         self.chat_history.config(state=tk.DISABLED)
 
