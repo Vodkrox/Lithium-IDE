@@ -34,7 +34,7 @@ _model_cache = {}
 MODEL_CANDIDATES = [get_default_model()]
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are an elite full-stack developer and code-editing assistant inside Lithium IDE. "
+    "You are an expert code-editing assistant and elite full-stack developer inside Lithium IDE. "
     "You respond in the same language the user uses (English, Spanish, etc.). "
     "When the user asks you to change code, output executable skill XML tags — never explanations of what XML is. "
     "Give COMPLETE, PRODUCTION-READY implementations. Do NOT output skeletons, placeholders, or stubs. "
@@ -371,6 +371,42 @@ def truncate_context(messages, max_tokens):
     return truncated
 
 
+def _fit_prompt_to_context(system_prompt, user_prompt, max_tokens, n_ctx):
+    """Trim prompt content and completion budget so the request fits the model window."""
+    system_prompt = system_prompt or ""
+    user_prompt = user_prompt or ""
+
+    reserve_tokens = 256
+    max_tokens = max(1, int(max_tokens or 0))
+    n_ctx = max(1, int(n_ctx or 0))
+
+    def _prompt_tokens(sys_text, user_text):
+        return estimate_tokens(_format_chat_prompt(sys_text, user_text))
+
+    prompt_tokens = _prompt_tokens(system_prompt, user_prompt)
+
+    # Keep enough room for the reply and a small safety margin.
+    max_prompt_tokens = max(1, n_ctx - max_tokens - reserve_tokens)
+    if prompt_tokens > max_prompt_tokens:
+        system_tokens = estimate_tokens(system_prompt)
+        user_budget = max(0, max_prompt_tokens - system_tokens)
+        if estimate_tokens(user_prompt) > user_budget:
+            trimmed_chars = max(0, user_budget * 4)
+            if trimmed_chars > 0:
+                user_prompt = (
+                    "[Earlier context trimmed to fit the model context window]\n"
+                    + user_prompt[-trimmed_chars:]
+                )
+            else:
+                user_prompt = "[Earlier context trimmed to fit the model context window]"
+
+        prompt_tokens = _prompt_tokens(system_prompt, user_prompt)
+
+    allowed_max_tokens = max(1, n_ctx - prompt_tokens - reserve_tokens)
+    adjusted_max_tokens = min(max_tokens, allowed_max_tokens)
+    return system_prompt, user_prompt, adjusted_max_tokens
+
+
 # ---------------------------------------------------------------------------
 # Subprocess runner script for the external Python interpreter
 # ---------------------------------------------------------------------------
@@ -536,6 +572,13 @@ def stream_generate_text(
     resolved_source = resolve_model_source(model_source)
     if not resolved_source:
         raise RuntimeError("Could not resolve the AI model path.")
+
+    n_ctx = kwargs.get("n_ctx", 8192)
+    max_tokens = kwargs.get("max_tokens", 512)
+    system_prompt, user_prompt, max_tokens = _fit_prompt_to_context(
+        system_prompt, user_prompt, max_tokens, n_ctx
+    )
+    kwargs["max_tokens"] = max_tokens
 
     prompt_text = _format_chat_prompt(system_prompt, user_prompt)
     gguf_path = _find_gguf_path(resolved_source)
@@ -1016,6 +1059,10 @@ def generate_text_from_model(
     if not resolved_source:
         raise RuntimeError("Could not resolve the AI model path.")
 
+    system_prompt, user_prompt, max_tokens = _fit_prompt_to_context(
+        system_prompt, user_prompt, max_tokens, n_ctx
+    )
+
     prompt_text = _format_chat_prompt(system_prompt, user_prompt)
 
     is_gguf = False
@@ -1086,3 +1133,91 @@ def generate_text_from_model(
         return _generate_with_transformers(
             resolved_source, prompt_text, max_tokens=max_tokens
         )
+
+
+def preload_model(
+    model_source,
+    n_ctx=8192,
+    n_batch=512,
+    n_threads=None,
+):
+    """Preload model into cache without generating text. Useful for warming up the model."""
+    try:
+       resolved_source = resolve_model_source(model_source)
+       if not resolved_source:
+           raise RuntimeError("Could not resolve the AI model path.")
+
+       is_gguf = False
+       gguf_path = None
+       if os.path.isfile(resolved_source) and resolved_source.endswith(".gguf"):
+           is_gguf = True
+           gguf_path = resolved_source
+       elif os.path.isdir(resolved_source):
+           for f in os.listdir(resolved_source):
+               if f.endswith(".gguf"):
+                   is_gguf = True
+                   gguf_path = os.path.join(resolved_source, f)
+                   break
+
+       if is_gguf:
+           # Preload GGUF model
+           Llama = _safe_import_llama_cpp()
+           if Llama is None:
+               if _can_use_external_llama_cpp():
+                   return  # External process handles it
+               raise RuntimeError("The llama-cpp backend is not installed.")
+
+           cache_key = (gguf_path, n_ctx, n_batch, n_threads)
+           if cache_key not in _model_cache:
+               llama_kwargs = {
+                   "model_path": gguf_path,
+                   "n_ctx": n_ctx,
+                   "n_batch": n_batch,
+                   "verbose": False,
+               }
+               if n_threads is not None:
+                   llama_kwargs["n_threads"] = n_threads
+               try:
+                   _model_cache[cache_key] = Llama(**llama_kwargs)
+                   print(
+                       f"[{datetime.now().strftime('%H:%M:%S')}] [AI Engine] "
+                       f"Model preloaded: {gguf_path}"
+                   )
+               except TypeError:
+                   _llama_match = re.search(
+                       r"unexpected keyword argument '(\w+)'", str(sys.exc_info()[1])
+                   )
+                   if _llama_match and _llama_match.group(1) in llama_kwargs:
+                       _ = llama_kwargs.pop(_llama_match.group(1))
+                       _model_cache[cache_key] = Llama(**llama_kwargs)
+                       print(
+                           f"[{datetime.now().strftime('%H:%M:%S')}] [AI Engine] "
+                           f"Model preloaded: {gguf_path}"
+                       )
+               except Exception as e:
+                   raise RuntimeError(f"Failed to preload model: {e}")
+       else:
+           # Preload transformers model
+           impl = _safe_import_transformers()
+           if impl is None:
+               raise RuntimeError("The transformers/torch libraries are not installed.")
+
+           torch, AutoModelForCausalLM, AutoTokenizer = impl
+           if resolved_source not in _model_cache:
+               tokenizer = AutoTokenizer.from_pretrained(
+                   resolved_source, trust_remote_code=True
+               )
+               model = AutoModelForCausalLM.from_pretrained(
+                   resolved_source,
+                   trust_remote_code=True,
+                   device_map="auto",
+                   torch_dtype=None,
+               )
+               _model_cache[resolved_source] = (tokenizer, model)
+               print(
+                   f"[{datetime.now().strftime('%H:%M:%S')}] [AI Engine] "
+                   f"Model preloaded: {resolved_source}"
+               )
+    except Exception as e:
+       print(f"[AI Engine] Model preload warning (non-critical): {e}")
+

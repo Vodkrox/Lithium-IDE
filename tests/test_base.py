@@ -242,6 +242,15 @@ class TestCollectWorkspaceFiles:
             files = ide._collect_workspace_files(max_files=5)
             assert len(files) == 5
 
+    def test_default_max_files_is_capped(self, ide):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i in range(80):
+                open(os.path.join(tmpdir, f"file{i}.txt"), "w").close()
+
+            ide.file_explorer.current_folder = tmpdir
+            files = ide._collect_workspace_files()
+            assert len(files) <= 40
+
     def test_uses_forward_slashes_in_paths(self, ide):
         with tempfile.TemporaryDirectory() as tmpdir:
             open(os.path.join(tmpdir, "test.py"), "w").close()
@@ -256,6 +265,89 @@ class TestCollectWorkspaceFiles:
         """If file_explorer is missing, should return [] gracefully."""
         del ide.file_explorer
         assert ide._collect_workspace_files() == []
+
+
+class TestWorkspaceTreeSummary:
+    def test_tree_summary_includes_nested_folders(self, ide):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src", "ai_powered"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "tests"), exist_ok=True)
+            open(os.path.join(tmpdir, "README.md"), "w").close()
+            open(os.path.join(tmpdir, "src", "main.py"), "w").close()
+            open(os.path.join(tmpdir, "src", "ai_powered", "engine.py"), "w").close()
+
+            ide.file_explorer.current_folder = tmpdir
+            summary = ide._collect_workspace_tree_summary(max_depth=3)
+
+            assert "README.md" in summary
+            assert "src/" in summary
+            assert "ai_powered/" in summary
+            assert "tests/" in summary
+
+    def test_folder_explanation_requests_use_tree_summary(self, ide):
+        assert ide._should_use_workspace_tree_summary("explica esta carpeta") is True
+        assert ide._should_use_workspace_tree_summary("explain this folder") is True
+        assert ide._should_use_workspace_tree_summary("write code for this file") is False
+
+    def test_folder_explanation_prompt_is_plain_language(self, ide):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            open(os.path.join(tmpdir, "README.md"), "w").close()
+            ide.file_explorer.current_folder = tmpdir
+
+            prompt = ide._build_ai_editor_prompt("explica esta carpeta")
+
+            assert "OUTPUT CONTRACT" in prompt
+            assert "plain language only" in prompt
+            assert "<skill>" not in prompt
+            assert "README.md" in prompt
+
+    def test_selective_excerpts_update_reading_status(self, ide):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("line 1\nline 2\nline 3\n")
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            with open(os.path.join(tmpdir, "src", "main.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+
+            ide.file_explorer.current_folder = tmpdir
+            ide.root = None
+            ide.status_label = MagicMock()
+
+            excerpts = ide._collect_workspace_excerpts(max_files=2)
+
+            assert excerpts
+            reading_messages = [call.kwargs.get("text", "") for call in ide.status_label.config.call_args_list]
+            assert any(msg.startswith("Reading README.md >> L1 - L80") for msg in reading_messages)
+
+
+class TestCompactPromptContext:
+    def test_compact_numbered_content_keeps_full_small_file(self, ide):
+        content = "line one\nline two\nline three"
+        numbered, notice = ide._build_compact_numbered_content(
+            content,
+            max_lines=20,
+            max_chars=500,
+        )
+
+        assert "1: line one" in numbered
+        assert "2: line two" in numbered
+        assert "3: line three" in numbered
+        assert "omitted" not in numbered.lower()
+        assert notice == ""
+
+    def test_compact_numbered_content_trims_large_file_with_notice(self, ide):
+        content = "\n".join(f"line {i}" for i in range(1, 401))
+        numbered, notice = ide._build_compact_numbered_content(
+            content,
+            max_lines=40,
+            max_chars=2000,
+        )
+
+        assert "1: line 1" in numbered
+        assert "400: line 400" in numbered
+        assert "omitted" in numbered.lower()
+        assert "trimmed" in notice.lower()
 
 
 # =========================================================================
