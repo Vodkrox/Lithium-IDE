@@ -19,9 +19,7 @@ You can download the latest version from the [releases tab](https://github.com/V
 
 # First Steps
 
-When you first open the IDE, you will be prompted to **install the required libraries**. Once the installation is complete, **Lithium will restart automatically**.
-
-After restarting, you will be prompted to **download the AI model**. When the download is finished, **Lithium will restart once again**.
+When you first open the IDE, you will be prompted to **download the AI model**. When the download is finished, **Lithium will restart**.
 
 After that, **you're ready to start**.
 
@@ -29,11 +27,10 @@ After that, **you're ready to start**.
 
 - **Edit** the current file or folder
 - **Edit** other files or folders
-- **Search the web** (Alpha)
+- **Search the web** (Not working properly)
 - **Reasoning**
 - **Explain code**
-- **Auto-approve changes**
-- **Run commands**
+- **Run commands** (Not working)
 - **Notify the user**
 
 # AI Levels
