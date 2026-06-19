@@ -180,6 +180,13 @@ JAVA_RULES = [
         "builtin",
     ),
     (r"@\w+(?:\.\w+)*", "decorator"),
+    (r"\bclass\s+(\w+)", "class"),
+    (r"\binterface\s+(\w+)", "class"),
+    (r"\benum\s+(\w+)", "class"),
+    (
+        r"\b(?:public|private|protected|static|final|abstract|synchronized|native)\s+\w+\s+(\w+)\s*\(",
+        "function",
+    ),
     (r"[+\-*/%&|^~]=?|==|!=|<=|>=|<|>|&&|\|\||!|\?", "operator"),
     (r"[\(\)\[\]\{\},;.]", "punctuation"),
 ]
@@ -208,6 +215,13 @@ C_RULES = [
         "keyword",
     ),
     (r"\b(?:true|false|nullptr|NULL)\b", "constant"),
+    (r"\bclass\s+(\w+)", "class"),
+    (r"\bstruct\s+(\w+)", "class"),
+    (r"\benum\s+(\w+)", "class"),
+    (
+        r"\b(?:public|private|protected|static|virtual|inline|constexpr|explicit|friend|mutable)\s+\w+\s+(\w+)\s*\(",
+        "function",
+    ),
     (r"[+\-*/%&|^~]=?|==|!=|<=|>=|<|>|&&|\|\||!|\?|::|->|<<|>>", "operator"),
     (r"[\(\)\[\]\{\},;:]", "punctuation"),
 ]
@@ -239,6 +253,15 @@ CSHARP_RULES = [
         r"StringBuilder|Array|var|dynamic)\b",
         "builtin",
     ),
+    (r"\bclass\s+(\w+)", "class"),
+    (r"\binterface\s+(\w+)", "class"),
+    (r"\bstruct\s+(\w+)", "class"),
+    (r"\benum\s+(\w+)", "class"),
+    (r"\brecord\s+(\w+)", "class"),
+    (
+        r"\b(?:public|private|protected|internal|static|virtual|override|abstract|sealed|async|unsafe|readonly|partial)\s+\w+\s+(\w+)\s*\(",
+        "function",
+    ),
     (r"[+\-*/%&|^~]=?|==|!=|<=|>=|<|>|&&|\|\||!|\?|::|->|\?\?|=>", "operator"),
     (r"[\(\)\[\]\{\},;:]", "punctuation"),
 ]
@@ -268,6 +291,8 @@ GO_RULES = [
         r"println|real|recover)\b",
         "builtin",
     ),
+    (r"\bfunc\s+(\w+)", "function"),
+    (r"\btype\s+(\w+)\s+(?:struct|interface)\b", "class"),
     (r"[+\-*/%&|^]=?|==|!=|<=|>=|<|>|&&|\|\||!|<-|:=|\.\.\.", "operator"),
     (r"[\(\)\[\]\{\},;:]", "punctuation"),
 ]
@@ -304,6 +329,10 @@ RUST_RULES = [
         r"include_str|include_bytes|env|option_env|concat|stringify|file|line|column)\b",
         "builtin",
     ),
+    (r"\bfn\s+(\w+)", "function"),
+    (r"\bstruct\s+(\w+)", "class"),
+    (r"\benum\s+(\w+)", "class"),
+    (r"\btrait\s+(\w+)", "class"),
     (r"[+\-*/%&|^~]=?|==|!=|<=|>=|<|>|&&|\|\||!|\?|::|->|=>|\.\.|=|\.\.\.", "operator"),
     (r"[\(\)\[\]\{\},;:]", "punctuation"),
 ]
@@ -329,6 +358,11 @@ PHP_RULES = [
         "keyword",
     ),
     (r"\b(?:true|false|null|TRUE|FALSE|NULL)\b", "constant"),
+    (r"\bfunction\s+(\w+)", "function"),
+    (r"\bclass\s+(\w+)", "class"),
+    (r"\binterface\s+(\w+)", "class"),
+    (r"\btrait\s+(\w+)", "class"),
+    (r"\benum\s+(\w+)", "class"),
     (r"[+\-*/%.&|^~]=?|==|!=|===|!==|<=>|<=|>=|<|>|&&|\|\||!|->|::", "operator"),
     (r"[\(\)\[\]\{\},;]", "punctuation"),
 ]
@@ -359,6 +393,9 @@ RUBY_RULES = [
         "builtin",
     ),
     (r"@\w+|@@\w+", "variable"),
+    (r"\bdef\s+(?:self\.)?(\w+)", "function"),
+    (r"\bclass\s+(\w+)", "class"),
+    (r"\bmodule\s+(\w+)", "class"),
     (r"[+\-*/%&|^~]=?|==|!=|<=|>=|<|>|&&|\|\||!|=>|::|\.\.|\.\.\.", "operator"),
     (r"[\(\)\[\]\{\},;]", "punctuation"),
 ]
