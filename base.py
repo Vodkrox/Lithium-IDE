@@ -213,7 +213,7 @@ class LithiumIDE:
             self.status_label,
             self.selected_lang,
             self.editor_label,
-            on_file_open_callback=self.update_editor_ai_state,
+            on_file_open_callback=self._on_file_opened,
             require_explorer_open=True,
             settings_manager=self.settings_manager,
         )
@@ -406,7 +406,11 @@ class LithiumIDE:
         self.explorer_frame.pack_propagate(False)
 
         self.file_explorer = FileExplorer(
-            self.explorer_frame, self.controller, theme.COLORS, theme.FONTS
+            self.explorer_frame,
+            self.controller,
+            theme.COLORS,
+            theme.FONTS,
+            on_folder_open_callback=self._on_folder_opened,
         )
         self.main_paned.add(self.explorer_frame, minsize=150, width=320)
 
@@ -3558,6 +3562,21 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             self._flash_after_id = self.root.after(180, lambda: blink(count + 1))
 
         blink()
+
+    # ── console directory sync ──────────────────────────────────────────────
+
+    def _on_file_opened(self):
+        """Called when a file is opened. Syncs the console to its parent dir."""
+        self.update_editor_ai_state()
+        if hasattr(self, "console") and self.controller.file_path:
+            parent = os.path.dirname(self.controller.file_path)
+            if parent:
+                self.console._change_dir(parent)
+
+    def _on_folder_opened(self, folder_path):
+        """Called when a folder is opened in the explorer. Syncs the console to it."""
+        if hasattr(self, "console"):
+            self.console._change_dir(folder_path)
 
     def update_editor_ai_state(self):
         """Update the enabled/disabled state of editor and AI features based on whether a file is opened."""

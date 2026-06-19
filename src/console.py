@@ -158,9 +158,8 @@ class Console(tk.Frame):
         self._history.append(cmd)
         self._history_index = None
 
-        # Handle internal commands
+        # Handle internal commands (each manages its own prompt)
         if self._handle_internal(cmd):
-            self._show_prompt()
             return
 
         # Run as a system command
@@ -203,10 +202,12 @@ class Console(tk.Frame):
         if stripped.startswith("cd "):
             path = stripped[3:].strip().strip('"').strip("'")
             self._change_dir(path)
+            self._show_prompt()
             return True
 
         if stripped == "cd":
             self._change_dir(os.path.expanduser("~"))
+            self._show_prompt()
             return True
 
         return False
@@ -216,7 +217,22 @@ class Console(tk.Frame):
         try:
             new_dir = os.path.abspath(os.path.join(self._cwd, target))
             os.chdir(new_dir)
+
+            # Refresh the displayed prompt in-place: replace the old-prompt
+            # prefix with the new one while preserving any user-typed text.
+            old_prompt = f"{self._cwd}>"
             self._cwd = os.getcwd()
+            new_prompt = self._prompt_str()
+
+            if old_prompt != new_prompt:
+                start = self._input_start()
+                raw = self.text.get(start, "end-1c")
+                if raw.startswith(old_prompt):
+                    user_text = raw[len(old_prompt) :]
+                    self.text.delete(start, "end-1c")
+                    self.text.insert(start, new_prompt + user_text, self._PROMPT_TAG)
+                    self.text.mark_set("insert", "end-1c")
+                    self.text.see("end")
         except Exception as e:
             self._write(f"  cd: {e}\n")
 
