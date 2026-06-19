@@ -1,6 +1,8 @@
 
 
 # Python caching
+base
+dist
 __pycache__/
 *.pyc
 *.pyo
