@@ -7,27 +7,27 @@ import shutil
 
 def resource_path(relative_path: str) -> str:
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        
+
         base_path = sys._MEIPASS
     else:
-        
+
         base_path = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
     return os.path.join(base_path, relative_path)
 
 
 def get_python_executable() -> str:
     if not getattr(sys, "frozen", False):
-        
+
         return sys.executable
 
-    
-    
+
+
     for name in ("py", "python3", "python"):
         found = shutil.which(name)
         if found:
             return found
 
-    
+
     if sys.platform == "win32":
         import glob
         patterns = [
@@ -40,7 +40,7 @@ def get_python_executable() -> str:
             if matches:
                 return matches[0]
 
-    
+
     return "python"
 
 
