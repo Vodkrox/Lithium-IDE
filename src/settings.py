@@ -9,16 +9,12 @@ class SettingsManager:
     DEFAULTS = {
         "theme": "Graphite",
         "language": "Python",
-        "last_file": None,
-        "last_folder": None,
         "ai_level_mode": "auto",
         "ai_level": "Medium",
         "ai_skill_file_scope": "open_file",
         "ai_skill_web_search": False,
         "ai_skill_reasoning": False,
         "ai_skill_explain_actions": False,
-        "ai_skill_auto_approve": False,
-        "ai_skill_run_commands": False,
         "ai_skill_notify_on_complete": False,
     }
 
@@ -29,11 +25,17 @@ class SettingsManager:
 
     def _get_settings_path(self):
         if sys.platform == "win32":
-            base_dir = os.getenv("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
+            base_dir = os.getenv("LOCALAPPDATA") or os.path.expanduser(
+                "~\\AppData\\Local"
+            )
         elif sys.platform == "darwin":
-            base_dir = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+            base_dir = os.path.join(
+                os.path.expanduser("~"), "Library", "Application Support"
+            )
         else:
-            base_dir = os.getenv("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+            base_dir = os.getenv("XDG_CONFIG_HOME") or os.path.join(
+                os.path.expanduser("~"), ".config"
+            )
 
         app_dir = os.path.join(base_dir, self.APP_NAME)
         try:
