@@ -13,8 +13,49 @@ import pytest
 from src.syntax import (
     DEFAULT_TOKEN_COLORS,
     LANGUAGE_RULES,
+    SyntaxHighlighter,
     TOKEN_TYPES,
 )
+
+
+class _FakeEditor:
+    def __init__(self, content=""):
+        self.content = content
+        self.modified = False
+        self.after_calls = []
+        self.cancelled = []
+        self.tags = ["syn_keyword", "sel"]
+
+    def bind(self, *_args, **_kwargs):
+        return None
+
+    def tag_config(self, *_args, **_kwargs):
+        return None
+
+    def tag_raise(self, *_args, **_kwargs):
+        return None
+
+    def edit_modified(self, value=None):
+        if value is None:
+            return self.modified
+        self.modified = value
+
+    def get(self, start, end):
+        assert (start, end) == ("1.0", "end-1c")
+        return self.content
+
+    def after_cancel(self, schedule_id):
+        self.cancelled.append(schedule_id)
+
+    def after(self, delay_ms, callback):
+        self.after_calls.append((delay_ms, callback))
+        return f"after-{len(self.after_calls)}"
+
+    def tag_names(self):
+        return list(self.tags)
+
+    def tag_remove(self, *_args, **_kwargs):
+        return None
 
 # =========================================================================
 # LANGUAGE_RULES structure
@@ -203,3 +244,30 @@ class TestDefaultTokenColors:
     def test_no_extra_colors(self):
         for t in DEFAULT_TOKEN_COLORS:
             assert t in TOKEN_TYPES, f"Extra color for undefined token type {t}"
+
+
+class TestSyntaxHighlighterBehavior:
+    def test_on_modified_schedules_immediate_full_highlight(self):
+        editor = _FakeEditor("print('hola')")
+        editor.modified = True
+        highlighter = SyntaxHighlighter(editor, lambda: "Python")
+
+        highlighter._on_modified()
+
+        assert highlighter._initial_highlight_done is True
+        assert editor.modified is False
+        assert len(editor.after_calls) == 1
+        delay_ms, callback = editor.after_calls[0]
+        assert delay_ms == 0
+        assert callback == highlighter.highlight_all
+
+    def test_schedule_highlight_cancels_previous_job(self):
+        editor = _FakeEditor("print('hola')")
+        highlighter = SyntaxHighlighter(editor, lambda: "Python")
+        highlighter._schedule_id = "after-0"
+
+        highlighter.schedule_highlight()
+
+        assert editor.cancelled == ["after-0"]
+        assert len(editor.after_calls) == 1
+        assert editor.after_calls[0][0] == 0
