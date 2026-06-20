@@ -6,13 +6,13 @@ from tkinter import ttk
 
 DEFAULT_GRAPHITE = {
     "bg_dark": "#000000",
-    "bg_editor": "#080808",
+    "bg_editor": "#101010",
     "bg_header": "#000000",
     "fg_light": "#FFFFFF",
     "fg_dim": "#7D8794",
     "accent": "#4DA3FF",
     "accent_hover": "#2F7DD1",
-    "console_bg": "#080808",
+    "console_bg": "#101010",
     "console_fg": "#E6EDF3",
     "console_err": "#FF5C5C",
     "sash_color": "#000000",
