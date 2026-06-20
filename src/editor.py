@@ -28,6 +28,7 @@ class LithiumEditorController:
         self.file_path = None
         self.on_file_open_callback = on_file_open_callback
         self.on_dirty_state_changed_callback = None
+        self.on_filesystem_change_callback = None
         self.require_explorer_open = require_explorer_open
         self.has_unsaved_changes = False
         self.settings_manager = settings_manager or SettingsManager()
@@ -64,6 +65,10 @@ class LithiumEditorController:
             self.on_dirty_state_changed_callback(
                 self.file_path, self.has_unsaved_changes
             )
+
+    def _notify_filesystem_change(self):
+        if self.on_filesystem_change_callback:
+            self.on_filesystem_change_callback()
 
     def mark_dirty(self):
         if not self.has_unsaved_changes:
@@ -129,6 +134,7 @@ class LithiumEditorController:
             try:
                 with open(self.file_path, "w", encoding="utf-8") as file:
                     file.write(self.editor.get(1.0, tk.END))
+                self._notify_filesystem_change()
                 self.mark_clean()
                 self.update_status()
                 self.settings_manager.set("language", self.selected_lang.get())
@@ -155,6 +161,7 @@ class LithiumEditorController:
             self.file_path = path
             with open(self.file_path, "w", encoding="utf-8") as file:
                 file.write(self.editor.get(1.0, tk.END))
+            self._notify_filesystem_change()
             self.editor.edit_modified(False)
             self.update_line_numbers()
             self.settings_manager.set("language", self.selected_lang.get())

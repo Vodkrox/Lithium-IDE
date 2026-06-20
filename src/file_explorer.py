@@ -6,6 +6,7 @@ Provides a treeview-based file explorer panel that displays the current folder s
 import os
 import shutil
 import tkinter as tk
+from hashlib import blake2b
 from tkinter import filedialog, messagebox, ttk
 
 from src.utils import resource_path
@@ -40,9 +41,13 @@ class FileExplorer:
         self.on_folder_open_callback = on_folder_open_callback
         self.tree = None
         self.icons = {}
+        self._auto_refresh_job = None
+        self._folder_signature = None
+        self._auto_refresh_interval_ms = 1000
 
         self._setup_ui()
         self._load_icons()
+        self._schedule_auto_refresh()
 
     def _setup_ui(self):
         """Set up the file explorer UI components."""
@@ -252,7 +257,7 @@ class FileExplorer:
         if folder:
             self.load_folder(folder)
 
-    def load_folder(self, folder_path):
+    def load_folder(self, folder_path, notify_folder_open=True, tree_state=None):
         """
         Load a folder into the file explorer.
 
@@ -268,11 +273,15 @@ class FileExplorer:
         for item in self.tree.get_children():
             self.tree.delete(item)
 
-        if self.on_folder_open_callback:
+        if notify_folder_open and self.on_folder_open_callback:
             self.on_folder_open_callback(folder_path)
 
         self._populate_tree(self.tree, "", folder_path)
         self.tree.item("", open=True)
+        self._folder_signature = self._build_folder_signature(folder_path)
+        if tree_state:
+            self._restore_tree_state(tree_state)
+        self._schedule_auto_refresh()
         parent = os.path.dirname(folder_path)
         if parent and parent != folder_path:
             try:
@@ -319,6 +328,132 @@ class FileExplorer:
         except Exception:
             pass
         return
+
+    def _iter_visible_paths(self, folder_path):
+        """Yield the visible files and folders shown by the explorer."""
+        try:
+            items = sorted(
+                os.listdir(folder_path),
+                key=lambda x: (not os.path.isdir(os.path.join(folder_path, x)), x.lower()),
+            )
+        except (FileNotFoundError, NotADirectoryError, PermissionError):
+            return
+
+        for item in items:
+            if item.startswith(".") or item in ["__pycache__", "node_modules", ".git"]:
+                continue
+
+            item_path = os.path.join(folder_path, item)
+            yield item_path
+
+            if os.path.isdir(item_path):
+                yield from self._iter_visible_paths(item_path)
+
+    def _build_folder_signature(self, folder_path):
+        """Build a lightweight snapshot of the current folder contents."""
+        if not folder_path or not os.path.isdir(folder_path):
+            return None
+
+        signature = []
+        root_path = os.path.abspath(folder_path)
+        for item_path in self._iter_visible_paths(root_path):
+            try:
+                stat_result = os.stat(item_path)
+            except (FileNotFoundError, PermissionError, OSError):
+                continue
+
+            rel_path = os.path.relpath(item_path, root_path).replace("\\", "/")
+            signature.append(
+                (
+                    rel_path,
+                    os.path.isdir(item_path),
+                    getattr(stat_result, "st_mtime_ns", int(stat_result.st_mtime * 1_000_000_000)),
+                    stat_result.st_size,
+                    self._get_file_content_signature(item_path),
+                )
+            )
+
+        return tuple(signature)
+
+    def _get_file_content_signature(self, item_path):
+        """Return a compact digest for files so content edits are detected reliably."""
+        if os.path.isdir(item_path):
+            return None
+
+        digest = blake2b(digest_size=8)
+        try:
+            with open(item_path, "rb") as file_obj:
+                for chunk in iter(lambda: file_obj.read(8192), b""):
+                    digest.update(chunk)
+        except OSError:
+            return None
+
+        return digest.hexdigest()
+
+    def _capture_tree_state(self):
+        """Capture expanded and selected items so refreshes do not reset the tree."""
+        expanded_paths = set()
+        selected_path = None
+
+        selection = self.tree.selection()
+        if selection:
+            values = self.tree.item(selection[0], "values")
+            if values:
+                selected_path = values[0]
+
+        def walk(parent):
+            for child in self.tree.get_children(parent):
+                values = self.tree.item(child, "values")
+                if values and self.tree.item(child, "open"):
+                    expanded_paths.add(values[0])
+                walk(child)
+
+        walk("")
+        return {"expanded_paths": expanded_paths, "selected_path": selected_path}
+
+    def _restore_tree_state(self, tree_state):
+        """Restore expanded nodes and selection after a refresh."""
+        for path in tree_state.get("expanded_paths", set()):
+            item_id = self._find_item_by_path("", path)
+            if item_id:
+                self.tree.item(item_id, open=True)
+
+        selected_path = tree_state.get("selected_path")
+        if selected_path:
+            item_id = self._find_item_by_path("", selected_path)
+            if item_id:
+                self.tree.selection_set(item_id)
+
+    def _schedule_auto_refresh(self):
+        """Keep the explorer synchronized with filesystem changes."""
+        if self._auto_refresh_job:
+            try:
+                self.parent.after_cancel(self._auto_refresh_job)
+            except Exception:
+                pass
+
+        try:
+            self._auto_refresh_job = self.parent.after(
+                self._auto_refresh_interval_ms, self._auto_refresh_tick
+            )
+        except Exception:
+            self._auto_refresh_job = None
+
+    def _auto_refresh_tick(self):
+        """Refresh the explorer if the current folder contents changed."""
+        self._auto_refresh_job = None
+
+        if not self.current_folder or not os.path.isdir(self.current_folder):
+            self._folder_signature = None
+            self._schedule_auto_refresh()
+            return
+
+        latest_signature = self._build_folder_signature(self.current_folder)
+        if latest_signature != self._folder_signature:
+            self.refresh()
+            return
+
+        self._schedule_auto_refresh()
 
     def _populate_tree(self, tree, parent, path):
         """
@@ -945,7 +1080,12 @@ class FileExplorer:
     def refresh(self):
         """Refresh the file explorer."""
         if self.current_folder:
-            self.load_folder(self.current_folder)
+            tree_state = self._capture_tree_state()
+            self.load_folder(
+                self.current_folder,
+                notify_folder_open=False,
+                tree_state=tree_state,
+            )
 
     def collapse_all(self):
         """Collapse all tree nodes."""
