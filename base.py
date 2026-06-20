@@ -218,6 +218,7 @@ class LithiumIDE:
             settings_manager=self.settings_manager,
         )
         self.controller.on_dirty_state_changed_callback = self.on_dirty_state_changed
+        self.controller.on_filesystem_change_callback = self._on_filesystem_changed
         self.controller.on_single_file_open_callback = self.hide_explorer
 
         def sync_scroll(*args):
@@ -247,16 +248,6 @@ class LithiumIDE:
             language_getter=lambda: self.selected_lang.get(),
         )
         self.syntax_highlighter.highlight_all()
-        self.editor.bind(
-            "<KeyRelease>",
-            lambda e: self.syntax_highlighter.schedule_highlight(),
-            add="+",
-        )
-        self.editor.bind(
-            "<MouseWheel>",
-            lambda e: self.syntax_highlighter.schedule_highlight(),
-            add="+",
-        )
 
         theme.apply_theme(
             self.root,
@@ -1829,8 +1820,7 @@ OUTPUT CONTRACT
 
         def on_filesystem_change():
             """Refresh the file explorer when AI creates or deletes files."""
-            if hasattr(self, "file_explorer") and self.file_explorer:
-                self.root.after(100, self.file_explorer.refresh)
+            self._on_filesystem_changed()
 
         try:
             self.ai_skills_executor = get_ai_skills_executor(
@@ -4140,10 +4130,17 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
     def _on_file_opened(self):
         """Called when a file is opened. Syncs the console to its parent dir."""
         self.update_editor_ai_state()
+        if hasattr(self, "syntax_highlighter"):
+            self.syntax_highlighter.highlight_all()
         if hasattr(self, "console") and self.controller.file_path:
             parent = os.path.dirname(self.controller.file_path)
             if parent:
                 self.console._change_dir(parent)
+
+    def _on_filesystem_changed(self):
+        """Refresh the file explorer after filesystem changes triggered by the app."""
+        if hasattr(self, "file_explorer") and self.file_explorer:
+            self.root.after(100, self.file_explorer.refresh)
 
     def _on_folder_opened(self, folder_path):
         """Called when a folder is opened in the explorer. Syncs the console to it."""

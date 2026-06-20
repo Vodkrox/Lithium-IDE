@@ -3,7 +3,7 @@ Syntax Highlighting Engine for Lithium IDE.
 
 Provides language-aware tokenization and colorization for the tk.Text editor.
 Uses regex-based tokenization with multi-line construct support.
-Tokenization runs only on the visible range for performance.
+Tokenization runs across the full document so files are colored immediately.
 """
 
 import re
@@ -514,9 +514,9 @@ class SyntaxHighlighter:
 
     Usage:
         highlighter = SyntaxHighlighter(editor_widget, language_getter)
-        highlighter.highlight_visible()
+        highlighter.highlight_all()
 
-    Bind it to <KeyRelease> and <MouseWheel> for live highlighting.
+    Bind it to editor modification events for live highlighting.
     """
 
     def __init__(
@@ -636,27 +636,22 @@ class SyntaxHighlighter:
         """Called when the text widget's modified flag changes."""
         if self.editor.edit_modified():
             if not self._initial_highlight_done:
-                # Check if the editor actually has content
                 content = self.editor.get("1.0", "end-1c")
                 if content:
                     self._initial_highlight_done = True
-                    # Use visible-range highlighting instead of full-document
-                    # to avoid X11 PolySegment request overflow on large files
-                    self.highlight_visible()
-                else:
-                    self.schedule_highlight()
+                self.schedule_highlight()
             else:
                 self.schedule_highlight()
             self.editor.edit_modified(False)
 
-    def schedule_highlight(self, delay_ms: int = 200):
-        """Schedule a highlight pass with debouncing."""
+    def schedule_highlight(self, delay_ms: int = 0):
+        """Schedule an immediate full-document highlight pass."""
         if self._schedule_id:
             try:
                 self.editor.after_cancel(self._schedule_id)
             except Exception:
                 pass
-        self._schedule_id = self.editor.after(delay_ms, self.highlight_visible)
+        self._schedule_id = self.editor.after(delay_ms, self.highlight_all)
 
     def highlight_visible(self):
         """
@@ -765,22 +760,7 @@ class SyntaxHighlighter:
             self._running = False
 
     def highlight_all(self):
-        """
-        Highlight the entire editor content (may be slow for large files).
-
-        Falls back to visible-only highlighting for large documents to avoid
-        X11 PolySegment request overflow (BadLength error) when too many
-        colored text segments are sent in a single render pass.
-        """
-        # Check document size — fall back to visible-only for large content
-        # to prevent X11 BadLength / PolySegment overflow
-        try:
-            total_lines = int(self.editor.index("end-1c").split(".")[0])
-            if total_lines > 500:
-                self.highlight_visible()
-                return
-        except Exception:
-            pass
+        """Highlight the entire editor content immediately."""
         # Remove old syntax tags globally
         for tag_name in self.editor.tag_names():
             if tag_name.startswith("syn_"):
@@ -841,11 +821,8 @@ class SyntaxHighlighter:
         self._apply_tags(tokens)
 
     def set_language(self, language: str):
-        """
-        Notify that the language changed. Triggers a re-highlight.
-        Uses visible-range highlighting to avoid X11 PolySegment overflow.
-        """
-        self.highlight_visible()
+        """Notify that the language changed and re-highlight the full document."""
+        self.highlight_all()
 
     def destroy(self):
         """Clean up bindings."""
