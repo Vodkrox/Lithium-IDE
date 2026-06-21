@@ -22,6 +22,7 @@ from src.ai_powered.ai_skills import get_executor as get_ai_skills_executor
 from src.ai_powered.ai_skills import reset_executor as reset_ai_skills_executor
 from src.ai_powered.conversation_manager import Conversation, get_conversation_manager
 from src.autocomplete import LithiumAutocompleteManager
+from src.agentic_ui import AgenticChangeBar, DiffViewer
 from src.console import Console
 from src.editor import LithiumEditorController
 from src.file_explorer import FileExplorer
@@ -571,6 +572,12 @@ class LithiumIDE:
         self.editor.bind("<Button-1>", self._on_disabled_area_click, add="+")
         self.chat_input.bind("<Button-1>", self._on_disabled_area_click, add="+")
         self.chat_history.bind("<Button-1>", self._on_disabled_area_click, add="+")
+
+        # Keyboard shortcuts for agentic AI approval workflow (GitHub Copilot-style)
+        # Ctrl+Enter to approve pending AI changes
+        self.root.bind("<Control-Return>", self._on_approve_shortcut, add="+")
+        # Escape to reject pending AI changes
+        self.root.bind("<Escape>", self._on_reject_shortcut, add="+")
 
         threading.Thread(target=self.load_languages_async, daemon=True).start()
 
@@ -2731,6 +2738,11 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
             new_content = self.editor.get("1.0", tk.END)
             added, removed = self._compute_diff_stats(original_content, new_content)
             if added > 0 or removed > 0:
+                # Show system message with agentic hint
+                self.append_to_chat_history(
+                    "⚡ System",
+                    f"AI has made {added + removed} changes. Use Ctrl+Enter to approve or Esc to reject.",
+                )
                 self._show_approval_bar(original_content, new_content, added, removed)
             else:
                 # No actual changes detected, clean up
@@ -3259,99 +3271,33 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         return added, removed
 
     def _show_approval_bar(self, original_content, new_content, added, removed):
-        """Show a unified approve/reject bar above the chat input with line diff stats."""
+        """Show a unified approve/reject bar using agentic UI (GitHub Copilot-style)."""
         if self._approval_bar is not None:
             try:
-                self._approval_bar.destroy()
+                if hasattr(self._approval_bar, "destroy"):
+                    self._approval_bar.destroy()
             except Exception:
                 pass
             self._approval_bar = None
 
         self._original_content_before_ai = original_content
 
-        bg = theme.COLORS.get("bg_dark", "#0B0D10")
-        accent = theme.COLORS.get("accent", "#7C9EFF")
-        success = theme.COLORS.get("success", "#A3BE8C")
-        error = theme.COLORS.get("error", "#F07178")
-        fg = theme.COLORS.get("fg_light", "#E5E9F0")
-        fg_dim = theme.COLORS.get("fg_dim", "#8F99A6")
-
-        bar = tk.Frame(
-            self.chat_input_container,
-            bg=bg,
-            bd=1,
-            relief=tk.FLAT,
-            highlightbackground=theme.COLORS.get("sash_color", "#1F2833"),
-            highlightthickness=1,
+        # Use the new AgenticChangeBar for a more modern, agentic UI
+        change_bar = AgenticChangeBar(
+            parent=self.chat_input_container,
+            theme_colors=theme.COLORS,
+            original_content=original_content,
+            new_content=new_content,
+            on_approve=self._on_approve_bar_approve,
+            on_reject=self._on_approve_bar_reject,
         )
+        
+        bar_frame = change_bar.create()
+        # Pack at TOP so it appears above chat input
+        bar_frame.pack(side=tk.TOP, fill=tk.X, padx=0, pady=(0, 5))
 
-        # Diff stats label: +N -M
-        diff_label = tk.Label(
-            bar,
-            text=f"+{added}  −{removed}",
-            font=("DejaVu Sans Mono", 11, "bold"),
-            fg=success if added > 0 else error,
-            bg=bg,
-            padx=10,
-        )
-        diff_label.pack(side=tk.LEFT, padx=(10, 5), pady=6)
-
-        # Separator
-        sep = tk.Frame(bar, bg=theme.COLORS.get("sash_color", "#1F2833"), width=1)
-        sep.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=4)
-
-        # Description
-        desc_label = tk.Label(
-            bar,
-            text="AI changes:",
-            font=("DejaVu Sans", 9),
-            fg=fg_dim,
-            bg=bg,
-        )
-        desc_label.pack(side=tk.LEFT, padx=(5, 5), pady=6)
-
-        # Approve button
-        approve_btn = tk.Button(
-            bar,
-            text="✓ Approve",
-            font=("DejaVu Sans", 9, "bold"),
-            bg=success,
-            fg=theme.COLORS.get("bg_dark", "#0B0D10"),
-            bd=0,
-            padx=14,
-            pady=3,
-            cursor="hand2",
-            command=lambda: self._on_approve_bar_approve(),
-            activebackground=theme.COLORS.get("success_hover", "#8FBC7A"),
-            activeforeground=theme.COLORS.get("bg_dark", "#0B0D10"),
-            relief=tk.FLAT,
-        )
-        approve_btn.pack(side=tk.RIGHT, padx=(5, 5), pady=4)
-
-        # Reject button
-        reject_btn = tk.Button(
-            bar,
-            text="✗ Reject",
-            font=("DejaVu Sans", 9),
-            bg=theme.COLORS.get("sash_color", "#1F2833"),
-            fg=fg,
-            bd=0,
-            padx=14,
-            pady=3,
-            cursor="hand2",
-            command=lambda: self._on_approve_bar_reject(),
-            activebackground=theme.COLORS.get("sash_color", "#1F2833"),
-            activeforeground=accent,
-            relief=tk.FLAT,
-        )
-        reject_btn.pack(side=tk.RIGHT, padx=(0, 5), pady=4)
-
-        # Pack at the TOP of chat_input_container so it appears above everything else
-        bar.pack(side=tk.TOP, fill=tk.X, padx=0, pady=(0, 5))
-        bar.pack_propagate(False)
-        bar.configure(height=34)
-
-        self._approval_bar = bar
+        self._approval_bar = bar_frame
+        self._approval_bar_controller = change_bar  # Keep reference to controller
 
     def _hide_approval_bar(self):
         """Remove the approval bar from the chat input area."""
@@ -3381,13 +3327,82 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
                 print(f"Error reverting AI changes: {e}")
         self._hide_approval_bar()
 
+    def _on_approve_shortcut(self, event=None):
+        """Handle Ctrl+Enter keyboard shortcut to approve pending AI changes."""
+        if self._approval_bar is not None and self._approval_bar.winfo_exists():
+            self._on_approve_bar_approve()
+            return "break"  # Prevent default behavior
+        return None
+
+    def _on_reject_shortcut(self, event=None):
+        """Handle Escape keyboard shortcut to reject pending AI changes."""
+        if self._approval_bar is not None and self._approval_bar.winfo_exists():
+            self._on_approve_bar_reject()
+            return "break"  # Prevent default behavior
+        return None
+
     def _get_skill_name_from_result(self, result_idx, all_results):
         """Get skill name from result index (simplified - in real impl would track names)."""
         return "unknown"
 
+    def insert_colored_diff(self, original: str, new: str, context_lines: int = 2):
+        """
+        Insert a colored diff visualization into the chat history.
+        Uses green for additions and red for deletions (GitHub-style).
+        """
+        self.chat_history.config(state=tk.NORMAL)
+        
+        # Setup tags for diff colors if not already done
+        try:
+            self.chat_history.tag_config(
+                "diff_added",
+                background="#1a3a1a",
+                foreground=theme.COLORS.get("success", "#90ee90"),
+            )
+            self.chat_history.tag_config(
+                "diff_removed",
+                background="#3a1a1a",
+                foreground=theme.COLORS.get("error", "#ff6b6b"),
+            )
+            self.chat_history.tag_config(
+                "diff_info",
+                foreground=theme.COLORS.get("fg_dim", "#a6adc8"),
+                font=("DejaVu Sans Mono", 9),
+            )
+        except Exception:
+            pass
+        
+        orig_lines = original.splitlines()
+        new_lines = new.splitlines()
+        
+        differ = difflib.unified_diff(
+            orig_lines,
+            new_lines,
+            fromfile="original",
+            tofile="modified",
+            lineterm="",
+            n=context_lines,
+        )
+        
+        for line in differ:
+            if line.startswith("+++") or line.startswith("---"):
+                self.chat_history.insert(tk.END, line + "\n", "diff_info")
+            elif line.startswith("@@"):
+                self.chat_history.insert(tk.END, line + "\n", "diff_info")
+            elif line.startswith("+"):
+                self.chat_history.insert(tk.END, line + "\n", "diff_added")
+            elif line.startswith("-"):
+                self.chat_history.insert(tk.END, line + "\n", "diff_removed")
+            else:
+                self.chat_history.insert(tk.END, line + "\n")
+        
+        self.chat_history.config(state=tk.DISABLED)
+
     def append_to_chat_history(self, sender, text, reasoning=None):
+        """Add message to chat history with optional reasoning section."""
         self.chat_history.config(state=tk.NORMAL)
 
+        # Determine sender color
         color = (
             theme.COLORS.get("accent", "#cba6f7")
             if sender == "AI"
@@ -3395,7 +3410,10 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         )
         if sender == "Error":
             color = theme.COLORS.get("console_err", "#ff0000")
+        elif sender == "⚡ AI":  # Agentic AI message
+            color = theme.COLORS.get("accent", "#cba6f7")
 
+        # Insert sender label with styling
         self.chat_history.insert(tk.END, f"\n{sender}:\n", ("sender_tag_" + sender,))
         self.chat_history.tag_config(
             "sender_tag_" + sender, foreground=color, font=("DejaVu Sans", 10, "bold")
@@ -3929,7 +3947,7 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
 
         self.refresh_conversations_list()
 
-        self.append_to_chat_history("AI", "Hello! How can I help you today?")
+        self.append_to_chat_history("AI", "Ready")
 
     def load_conversation(self, conversation_id):
         """Load a conversation and display its messages."""
