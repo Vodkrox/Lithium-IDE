@@ -76,7 +76,7 @@ You can download community themes from **[Awesome-Lithium](https://github.com/Vo
 If you create a new theme, please submit a **pull request** to the **Awesome-Lithium** repository!
 
 # Requirements 
-(Install with:  pip install -r requirements.txt)
+(Install with: pip install -r requirements.txt)
 
 - Pillow>=10.0.0
 - llama-cpp-python>=0.2.0
