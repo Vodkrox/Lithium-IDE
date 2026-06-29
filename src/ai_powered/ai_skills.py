@@ -204,6 +204,14 @@ class AISkillsExecutor:
 
             "append_lines": self._skill_append_lines,
 
+            "create_file": self._skill_create_file,
+
+            "delete_file": self._skill_delete_file,
+
+            "create_folder": self._skill_create_folder,
+
+            "delete_folder": self._skill_delete_folder,
+
         }
 
 
@@ -1646,294 +1654,6 @@ class AISkillsExecutor:
 
 
 
-    def _skill_create_file(self, params: Dict[str, str]) -> AISkillResult:
-
-        """
-
-        Create a new file with content.
-
-
-
-        Parameters:
-
-            path: The file path (relative to project or absolute)
-
-            content: The file content (optional)
-
-        """
-
-        path = params.get("path")
-
-        content = params.get("content", "")
-
-
-
-        if not path:
-
-            return AISkillResult(False, "No file path provided for create_file")
-
-
-
-        if not os.path.isabs(path):
-
-            current_file = self.file_path_getter()
-
-            if current_file:
-
-                base_dir = os.path.dirname(current_file)
-
-            else:
-
-                base_dir = os.getcwd()
-
-            path = os.path.join(base_dir, path)
-
-
-
-        try:
-
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-
-
-
-            with open(path, "w", encoding="utf-8") as f:
-
-                f.write(content)
-
-
-
-            self._log(f"Created file: {path}")
-
-            self._notify_filesystem_change()
-
-            return AISkillResult(
-
-                True, f"Successfully created file: {os.path.basename(path)}"
-
-            )
-
-        except Exception as e:
-
-            return AISkillResult(False, f"Failed to create file: {str(e)}")
-
-
-
-    def _notify_filesystem_change(self):
-
-        """Notify the listener that files have changed on disk."""
-
-        if self.on_filesystem_change:
-
-            self.on_filesystem_change()
-
-
-
-    def _skill_delete_file(self, params: Dict[str, str]) -> AISkillResult:
-
-        """
-
-        Delete a file.
-
-
-
-        Parameters:
-
-            path: The file path to delete
-
-        """
-
-        path = params.get("path")
-
-
-
-        if not path:
-
-            return AISkillResult(False, "No file path provided for delete_file")
-
-
-
-        if not os.path.isabs(path):
-
-            current_file = self.file_path_getter()
-
-            if current_file:
-
-                base_dir = os.path.dirname(current_file)
-
-            else:
-
-                base_dir = os.getcwd()
-
-            path = os.path.join(base_dir, path)
-
-
-
-        try:
-
-            if os.path.isfile(path):
-
-                os.remove(path)
-
-                self._log(f"Deleted file: {path}")
-
-                self._notify_filesystem_change()
-
-                return AISkillResult(
-
-                    True, f"Successfully deleted file: {os.path.basename(path)}"
-
-                )
-
-            else:
-
-                return AISkillResult(False, f"File not found: {path}")
-
-        except Exception as e:
-
-            return AISkillResult(False, f"Failed to delete file: {str(e)}")
-
-
-
-    def _skill_create_folder(self, params: Dict[str, str]) -> AISkillResult:
-
-        """
-
-        Create a new folder.
-
-
-
-        Parameters:
-
-            path: The folder path to create
-
-        """
-
-        path = params.get("path")
-
-
-
-        if not path:
-
-            return AISkillResult(False, "No folder path provided for create_folder")
-
-
-
-        if not os.path.isabs(path):
-
-            current_file = self.file_path_getter()
-
-            if current_file:
-
-                base_dir = os.path.dirname(current_file)
-
-            else:
-
-                base_dir = os.getcwd()
-
-            path = os.path.join(base_dir, path)
-
-
-
-        try:
-
-            os.makedirs(path, exist_ok=True)
-
-            self._log(f"Created folder: {path}")
-
-            self._notify_filesystem_change()
-
-            return AISkillResult(
-
-                True, f"Successfully created folder: {os.path.basename(path)}"
-
-            )
-
-        except Exception as e:
-
-            return AISkillResult(False, f"Failed to create folder: {str(e)}")
-
-
-
-    def _skill_delete_folder(self, params: Dict[str, str]) -> AISkillResult:
-
-        """
-
-        Delete a folder and its contents.
-
-
-
-        Parameters:
-
-            path: The folder path to delete
-
-            recursive: Whether to delete recursively (default: true)
-
-        """
-
-        path = params.get("path")
-
-        recursive = params.get("recursive", "true").lower() == "true"
-
-
-
-        if not path:
-
-            return AISkillResult(False, "No folder path provided for delete_folder")
-
-
-
-        if not os.path.isabs(path):
-
-            current_file = self.file_path_getter()
-
-            if current_file:
-
-                base_dir = os.path.dirname(current_file)
-
-            else:
-
-                base_dir = os.getcwd()
-
-            path = os.path.join(base_dir, path)
-
-
-
-        try:
-
-            if os.path.isdir(path):
-
-                if recursive:
-
-                    import shutil
-
-
-
-                    shutil.rmtree(path)
-
-                else:
-
-                    os.rmdir(path)
-
-                self._log(f"Deleted folder: {path}")
-
-                self._notify_filesystem_change()
-
-                return AISkillResult(
-
-                    True, f"Successfully deleted folder: {os.path.basename(path)}"
-
-                )
-
-            else:
-
-                return AISkillResult(False, f"Folder not found: {path}")
-
-        except Exception as e:
-
-            return AISkillResult(False, f"Failed to delete folder: {str(e)}")
-
-
-
     def _skill_replace_file(self, params: Dict[str, str]) -> AISkillResult:
 
         """
@@ -1969,6 +1689,149 @@ class AISkillsExecutor:
         self._log("Replaced entire file content")
 
         return AISkillResult(True, "Successfully replaced file content")
+
+    def _skill_create_file(self, params: Dict[str, str]) -> AISkillResult:
+        """
+        Create a new file with the given content.
+
+        Parameters:
+            path: The file path relative to the project folder
+            content: The file content
+        """
+        file_path = params.get("path", "").strip()
+        content = params.get("content", "")
+
+        if not file_path:
+            return AISkillResult(False, "No path provided for create_file")
+
+        project_folder = self._get_project_folder()
+        if not project_folder:
+            return AISkillResult(False, "No project folder available")
+
+        # Sanitize path to prevent directory traversal
+        file_path = file_path.lstrip("./\\")
+        full_path = os.path.normpath(os.path.join(project_folder, file_path))
+
+        # Security check: ensure the file is within project folder
+        if not full_path.startswith(os.path.normpath(project_folder)):
+            return AISkillResult(False, "Cannot create file outside project folder")
+
+        try:
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                if not content.endswith("\n"):
+                    content += "\n"
+                f.write(content)
+            self._log(f"Created file: {file_path}")
+            if self.on_filesystem_change:
+                self.on_filesystem_change(full_path)
+            return AISkillResult(True, f"Created file: {file_path}")
+        except Exception as e:
+            return AISkillResult(False, f"Failed to create file: {e}")
+
+    def _skill_delete_file(self, params: Dict[str, str]) -> AISkillResult:
+        """
+        Delete a file.
+
+        Parameters:
+            path: The file path relative to the project folder
+        """
+        file_path = params.get("path", "").strip()
+
+        if not file_path:
+            return AISkillResult(False, "No path provided for delete_file")
+
+        project_folder = self._get_project_folder()
+        if not project_folder:
+            return AISkillResult(False, "No project folder available")
+
+        file_path = file_path.lstrip("./\\")
+        full_path = os.path.normpath(os.path.join(project_folder, file_path))
+
+        # Security check
+        if not full_path.startswith(os.path.normpath(project_folder)):
+            return AISkillResult(False, "Cannot delete file outside project folder")
+
+        try:
+            if os.path.exists(full_path) and os.path.isfile(full_path):
+                os.remove(full_path)
+                self._log(f"Deleted file: {file_path}")
+                if self.on_filesystem_change:
+                    self.on_filesystem_change(full_path)
+                return AISkillResult(True, f"Deleted file: {file_path}")
+            else:
+                return AISkillResult(False, f"File not found: {file_path}")
+        except Exception as e:
+            return AISkillResult(False, f"Failed to delete file: {e}")
+
+    def _skill_create_folder(self, params: Dict[str, str]) -> AISkillResult:
+        """
+        Create a new folder.
+
+        Parameters:
+            path: The folder path relative to the project folder
+        """
+        folder_path = params.get("path", "").strip()
+
+        if not folder_path:
+            return AISkillResult(False, "No path provided for create_folder")
+
+        project_folder = self._get_project_folder()
+        if not project_folder:
+            return AISkillResult(False, "No project folder available")
+
+        folder_path = folder_path.lstrip("./\\")
+        full_path = os.path.normpath(os.path.join(project_folder, folder_path))
+
+        # Security check
+        if not full_path.startswith(os.path.normpath(project_folder)):
+            return AISkillResult(False, "Cannot create folder outside project folder")
+
+        try:
+            os.makedirs(full_path, exist_ok=True)
+            self._log(f"Created folder: {folder_path}")
+            if self.on_filesystem_change:
+                self.on_filesystem_change(full_path)
+            return AISkillResult(True, f"Created folder: {folder_path}")
+        except Exception as e:
+            return AISkillResult(False, f"Failed to create folder: {e}")
+
+    def _skill_delete_folder(self, params: Dict[str, str]) -> AISkillResult:
+        """
+        Delete a folder and its contents.
+
+        Parameters:
+            path: The folder path relative to the project folder
+        """
+        import shutil
+
+        folder_path = params.get("path", "").strip()
+
+        if not folder_path:
+            return AISkillResult(False, "No path provided for delete_folder")
+
+        project_folder = self._get_project_folder()
+        if not project_folder:
+            return AISkillResult(False, "No project folder available")
+
+        folder_path = folder_path.lstrip("./\\")
+        full_path = os.path.normpath(os.path.join(project_folder, folder_path))
+
+        # Security check
+        if not full_path.startswith(os.path.normpath(project_folder)):
+            return AISkillResult(False, "Cannot delete folder outside project folder")
+
+        try:
+            if os.path.exists(full_path) and os.path.isdir(full_path):
+                shutil.rmtree(full_path)
+                self._log(f"Deleted folder: {folder_path}")
+                if self.on_filesystem_change:
+                    self.on_filesystem_change(full_path)
+                return AISkillResult(True, f"Deleted folder: {folder_path}")
+            else:
+                return AISkillResult(False, f"Folder not found: {folder_path}")
+        except Exception as e:
+            return AISkillResult(False, f"Failed to delete folder: {e}")
 
 
 
@@ -2078,19 +1941,19 @@ class AISkillsExecutor:
 
                 )
 
-            elif self.file_scope == "workspace" and skill_name == "create_file":
+            elif skill_name == "create_file":
 
                 result = self.preview_create_file(params)
 
-            elif self.file_scope == "workspace" and skill_name == "delete_file":
+            elif skill_name == "delete_file":
 
                 result = self.preview_delete_file(params)
 
-            elif self.file_scope == "workspace" and skill_name == "create_folder":
+            elif skill_name == "create_folder":
 
                 result = self.preview_create_folder(params)
 
-            elif self.file_scope == "workspace" and skill_name == "delete_folder":
+            elif skill_name == "delete_folder":
 
                 result = self.preview_delete_folder(params)
 
@@ -2675,7 +2538,8 @@ WORKSPACE SKILLS (paths relative to the opened project folder):
 <skill name="create_file"><parameter name="path">relative/path.py</parameter><parameter name="content">CODE</parameter></skill>
 
   - Create a new file at the given path with the provided content.
-
+  - REQUIRED: Always include both 'path' and 'content' parameters.
+  - Example: <skill name="create_file"><parameter name="path">browser.py</parameter><parameter name="content">import tkinter...</parameter></skill>
 
 
 <skill name="delete_file"><parameter name="path">relative/path.py</parameter></skill>
@@ -2683,17 +2547,14 @@ WORKSPACE SKILLS (paths relative to the opened project folder):
   - Delete an existing file at the given path.
 
 
-
 <skill name="create_folder"><parameter name="path">relative/folder</parameter></skill>
 
   - Create a new folder at the given path.
 
 
-
 <skill name="delete_folder"><parameter name="path">relative/folder</parameter></skill>
 
   - Delete a folder and all its contents at the given path.
-
 
 
 You may modify files anywhere under the opened folder tree, not only the currently open file.

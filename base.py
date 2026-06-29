@@ -13,7 +13,6 @@ from src import theme
 from src.ai_powered import ai_engine as ai_runner
 from src.ai_powered import ai_level as ai_level_manager
 from src.ai_powered.ai_skill_settings import (
-    FILE_SCOPE_OPTIONS,
     SKILL_TOGGLE_LABELS,
     AISkillSettings,
 )
@@ -21,6 +20,7 @@ from src.ai_powered.ai_skills import AISkillResult
 from src.ai_powered.ai_skills import get_executor as get_ai_skills_executor
 from src.ai_powered.ai_skills import reset_executor as reset_ai_skills_executor
 from src.ai_powered.conversation_manager import Conversation, get_conversation_manager
+from src.ai_powered.rag_engine import ProjectRAG
 from src.autocomplete import LithiumAutocompleteManager
 from src.agentic_ui import AgenticChangeBar, DiffViewer
 from src.console import Console
@@ -414,6 +414,7 @@ class LithiumIDE:
 
         self.conversation_manager = get_conversation_manager()
         self._conversation_ids = []
+        self._rag = ProjectRAG()
         self.current_conversation_label = tk.StringVar(value="No conversation")
 
         self.chat_frame = tk.Frame(self.center_right_paned, bg=theme.COLORS["bg_dark"])
@@ -946,10 +947,14 @@ class LithiumIDE:
         config_win.protocol("WM_DELETE_WINDOW", on_close)
 
     def ask_ai_prompt(self):
-        has_file_opened = self.controller.file_path is not None
-        if not has_file_opened:
+        has_folder_opened = bool(
+            hasattr(self, "file_explorer")
+            and self.file_explorer
+            and self.file_explorer.current_folder
+        )
+        if not self.controller.file_path and not has_folder_opened:
             messagebox.showwarning(
-                "AI", "You must open a file from the explorer before using AI features."
+                "AI", "Open a folder from the explorer before using AI features."
             )
             return
 
@@ -1416,9 +1421,6 @@ Example prompts:
         self._apply_ai_level()
 
     def _init_ai_skill_vars(self):
-        self._ai_skill_file_scope_var = tk.StringVar(
-            value=self.ai_skill_settings.get("file_scope")
-        )
         self._ai_skill_toggle_vars = {}
         for key, _label in SKILL_TOGGLE_LABELS:
             self._ai_skill_toggle_vars[key] = tk.BooleanVar(
@@ -1461,18 +1463,6 @@ Example prompts:
             fg=theme.COLORS["fg_light"],
         )
         theme.style_menu(menu)
-
-        for scope_value, scope_label in FILE_SCOPE_OPTIONS:
-            menu.add_radiobutton(
-                label=scope_label,
-                variable=self._ai_skill_file_scope_var,
-                value=scope_value,
-                command=lambda value=scope_value: self._set_ai_skill(
-                    "file_scope", value
-                ),
-            )
-
-        menu.add_separator()
 
         for key, label in SKILL_TOGGLE_LABELS:
             menu.add_checkbutton(
@@ -1825,7 +1815,7 @@ OUTPUT CONTRACT
                 0, lambda: self.status_label.config(text=f"AI Skills: {message}")
             )
 
-        def on_filesystem_change():
+        def on_filesystem_change(_changed_path=None):
             """Refresh the file explorer when AI creates or deletes files."""
             self._on_filesystem_changed()
 
@@ -1903,10 +1893,14 @@ OUTPUT CONTRACT
         self.chat_history.config(state=tk.DISABLED)
 
     def send_chat_message(self):
-        has_file_opened = self.controller.file_path is not None
-        if not has_file_opened:
+        has_folder_opened = bool(
+            hasattr(self, "file_explorer")
+            and self.file_explorer
+            and self.file_explorer.current_folder
+        )
+        if not self.controller.file_path and not has_folder_opened:
             messagebox.showwarning(
-                "AI", "You must open a file from the explorer before using AI features."
+                "AI", "Open a folder from the explorer before using the AI chat."
             )
             return
 
@@ -1968,36 +1962,47 @@ OUTPUT CONTRACT
         if self._should_use_workspace_tree_summary(user_message):
             return self._build_ai_folder_explanation_prompt(user_message)
 
-        file_path = self.controller.file_path or "Untitled"
+        file_path = self.controller.file_path
         language = self.selected_lang.get()
-        content = self.editor.get("1.0", "end-1c")
-        numbered_content, context_notice = self._build_compact_numbered_content(content)
+
+        if file_path:
+            content = self.editor.get("1.0", "end-1c")
+            numbered_content, context_notice = self._build_compact_numbered_content(content)
+            file_section = f"""Current file path: {file_path}
+Current language: {language}
+
+Current open file content with line numbers:
+```text
+{numbered_content}
+```
+{context_notice}"""
+        else:
+            file_section = "(No file is currently open — respond based on the project context and the user's request.)"
 
         workspace_section = ""
-        if self.ai_skill_settings.is_workspace_scope():
-            if self._should_use_workspace_tree_summary(user_message):
-                tree_summary = self._collect_workspace_tree_summary()
-                if tree_summary:
-                    workspace_section = f"""
+        if self._should_use_workspace_tree_summary(user_message):
+            tree_summary = self._collect_workspace_tree_summary()
+            if tree_summary:
+                workspace_section = f"""
 Project scope: you may modify files anywhere under the opened folder tree.
 Workspace tree summary:
 {tree_summary}
 """
-                else:
-                    workspace_section = """
+            else:
+                workspace_section = """
 Project scope: you may modify files anywhere under the opened folder tree.
 """
-            else:
-                project_files = self._collect_workspace_files(max_files=20)
-                if project_files:
-                    file_list = "\n".join(f"- {path}" for path in project_files)
-                    workspace_section = f"""
+        else:
+            project_files = self._collect_workspace_files(max_files=20)
+            if project_files:
+                file_list = "\n".join(f"- {path}" for path in project_files)
+                workspace_section = f"""
 Project scope: you may modify files anywhere under the opened folder tree.
 Project files (relative paths):
 {file_list}
 """
-                else:
-                    workspace_section = """
+            else:
+                workspace_section = """
 Project scope: you may modify files anywhere under the opened folder tree.
 """
 
@@ -2006,14 +2011,7 @@ Project scope: you may modify files anywhere under the opened folder tree.
 User request:
 {user_message}
 
-Current file path: {file_path}
-Current language: {language}
-
-Current open file content with line numbers:
-```text
-{numbered_content}
-```
-{context_notice}
+{file_section}
 {workspace_section}
 OUTPUT CONTRACT
 - Answer in plain language directly in chat.
@@ -2059,35 +2057,52 @@ OUTPUT CONTRACT
                     "- Do NOT describe the changes in prose instead of using skills."
                 )
 
-        scope_rule = (
-            "- All modifications must target only the currently open file and must be expressed with skill XML tags so the user can approve them."
-            if not self.ai_skill_settings.is_workspace_scope()
-            else "- Modifications may target the open file or other files under the opened project folder using the appropriate skill XML tags."
-        )
+        scope_rule = "- Modifications may target the open file or other files under the opened project folder using the appropriate skill XML tags."
+
+        # When no file is open the model must create one before writing anything
+        no_file_contract = ""
+        file_editing_hints = """- If the current content would make the final file invalid, first emit delete_lines for the invalid/unrelated lines, then emit add_lines with the corrected code.
+- If the whole file is invalid or contains unrelated text, use replace_file to replace the entire file content.
+- Do not just append code if existing text/code would prevent compilation.
+
+For example, if line 1 is invalid plain text and the user asks for Python hello world, respond exactly like this:
+<skill name="delete_lines"><parameter name="line">1</parameter><parameter name="count">1</parameter></skill>
+<skill name="add_lines"><parameter name="line">1</parameter><parameter name="content">print("Hello, world!")</parameter></skill>"""
+        if not self.controller.file_path:
+            no_file_contract = (
+                "IMPORTANT: No file is currently open.\n"
+                "You MUST use the create_file skill to create a new file before writing any code.\n"
+                "Choose an appropriate filename and path relative to the project root.\n"
+                "Put ALL the code inside that single create_file skill — do NOT use add_lines or edit_lines on a non-existent file.\n"
+            )
+            file_editing_hints = ""
+
+        # --- RAG: inject relevant project context ---
+        rag_section = ""
+        self._last_rag_hits = []
+        if hasattr(self, "_rag") and self._rag.is_indexed:
+            current_file_abs = self.controller.file_path
+            hits = self._rag.retrieve(
+                user_message, top_k=6, exclude_file=current_file_abs
+            )
+            self._last_rag_hits = hits
+            if hits:
+                rag_context = self._rag.get_context_for_prompt(
+                    user_message, max_chars=3000, top_k=6, exclude_file=current_file_abs
+                )
+                if rag_context:
+                    rag_section = f"\n{rag_context}\n"
 
         return f"""TASK
 User request:
 {user_message}
 
-Current file path: {file_path}
-Current language: {language}
-
-Current open file content with line numbers:
-```text
-{numbered_content}
-```
-{context_notice}
-{workspace_section}
+{file_section}
+{workspace_section}{rag_section}
 OUTPUT CONTRACT
-{reasoning_instruction}{edit_output_rule}
-- If the current content would make the final file invalid, first emit delete_lines for the invalid/unrelated lines, then emit add_lines with the corrected code.
-- If the whole file is invalid or contains unrelated text, use replace_file to replace the entire file content.
-- Do not just append code if existing text/code would prevent compilation.
+{no_file_contract}{reasoning_instruction}{edit_output_rule}
+{file_editing_hints}
 {scope_rule}
-
-For example, if line 1 is invalid plain text and the user asks for Python hello world, respond exactly like this:
-<skill name="delete_lines"><parameter name="line">1</parameter><parameter name="count">1</parameter></skill>
-<skill name="add_lines"><parameter name="line">1</parameter><parameter name="content">print("Hello, world!")</parameter></skill>
 """
 
     def _is_chat_only_request(self, user_message):
@@ -2356,6 +2371,85 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         except Exception:
             return False
 
+    def _show_rag_sources_widget(self, hits):
+        """Insert a compact collapsible RAG-sources pill into the chat (main thread)."""
+        if not hits:
+            return
+        self.chat_history.config(state=tk.NORMAL)
+
+        bg = theme.COLORS.get("bg_editor", "#080808")
+        bg_dark = theme.COLORS.get("bg_dark", "#000000")
+        fg_dim = theme.COLORS.get("fg_dim", "#7D8794")
+        accent = theme.COLORS.get("accent", "#cba6f7")
+
+        frame = tk.Frame(self.chat_history, bg=bg)
+        visible = [False]
+
+        # Deduplicate file paths, preserve score order
+        seen = set()
+        unique_files = []
+        for chunk, score in hits:
+            if chunk.rel_path not in seen:
+                seen.add(chunk.rel_path)
+                unique_files.append((chunk.rel_path, score))
+
+        n = len(unique_files)
+        label_plural = "s" if n != 1 else ""
+        pill_text = f"\U0001f50d RAG \u00b7 {n} archivo{label_plural} consultado{label_plural}"
+
+        list_frame = tk.Frame(frame, bg=bg_dark)
+
+        for rel_path, score in unique_files:
+            row = tk.Frame(list_frame, bg=bg_dark)
+            row.pack(fill=tk.X, padx=4, pady=1)
+            tk.Label(
+                row,
+                text=f"  \u2022 {rel_path}",
+                font=("DejaVu Sans Mono", 8),
+                fg=fg_dim,
+                bg=bg_dark,
+                anchor="w",
+            ).pack(side=tk.LEFT)
+            tk.Label(
+                row,
+                text=f"{score:.2f}",
+                font=("DejaVu Sans Mono", 8),
+                fg=accent,
+                bg=bg_dark,
+                anchor="e",
+            ).pack(side=tk.RIGHT, padx=(0, 6))
+
+        def toggle():
+            if visible[0]:
+                list_frame.pack_forget()
+                toggle_btn.config(text=pill_text)
+            else:
+                list_frame.pack(fill=tk.X, padx=2, pady=(0, 4))
+                toggle_btn.config(text=pill_text + " \u25be")
+            visible[0] = not visible[0]
+
+        toggle_btn = tk.Button(
+            frame,
+            text=pill_text,
+            font=("DejaVu Sans", 8),
+            fg=fg_dim,
+            bg=bg,
+            bd=0,
+            activebackground=bg_dark,
+            activeforeground=accent,
+            cursor="hand2",
+            command=toggle,
+            anchor=tk.W,
+            padx=6,
+            pady=2,
+        )
+        toggle_btn.pack(fill=tk.X)
+
+        self.chat_history.window_create(tk.END, window=frame)
+        self.chat_history.insert(tk.END, "\n")
+        self.chat_history.see(tk.END)
+        self.chat_history.config(state=tk.DISABLED)
+
     def _stream_ai_response(self, prompt, chat_only=False):
         """Run AI with streaming, showing response tokens in real-time."""
         self.root.after(0, lambda: self.status_label.config(text="AI: Generating..."))
@@ -2365,6 +2459,10 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         self.root.after(0, self._show_loading_indicator)
 
         editor_prompt = self._build_ai_editor_prompt(prompt, chat_only=chat_only)
+        # Show RAG sources pill in chat if any files were retrieved
+        rag_hits = list(getattr(self, "_last_rag_hits", []))
+        if rag_hits:
+            self.root.after(0, lambda h=rag_hits: self._show_rag_sources_widget(h))
         inference_params = dict(self.ai_inference_params)
         base_tokens = inference_params.get("max_tokens", 768)
         inference_params["max_tokens"] = int(base_tokens * 1.35)
@@ -2797,6 +2895,9 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
 
         try:
             editor_prompt = self._build_ai_editor_prompt(prompt, chat_only=chat_only)
+            rag_hits = list(getattr(self, "_last_rag_hits", []))
+            if rag_hits:
+                self.root.after(0, lambda h=rag_hits: self._show_rag_sources_widget(h))
             inference_params = dict(self.ai_inference_params)
             if self.ai_skill_settings.get("reasoning"):
                 base_tokens = inference_params.get("max_tokens", 768)
@@ -4107,7 +4208,12 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
 
     def _on_disabled_area_click(self, event):
         """Flash the File button when user clicks on a disabled area."""
-        if self.controller.file_path is None and not self.file_or_folder_opened:
+        has_folder_opened = bool(
+            hasattr(self, "file_explorer")
+            and self.file_explorer
+            and self.file_explorer.current_folder
+        )
+        if self.controller.file_path is None and not has_folder_opened:
             self._flash_file_button()
 
     def _flash_file_button(self):
@@ -4164,38 +4270,48 @@ IMPORTANT: The user REJECTED your previous suggestion. Do NOT repeat what you ju
         """Called when a folder is opened in the explorer. Syncs the console to it."""
         if hasattr(self, "console"):
             self.console._change_dir(folder_path)
+        # Unlock the chat now that a folder is available
+        self.root.after(0, self.update_editor_ai_state)
+        # Rebuild RAG index for the newly opened project in the background
+        if hasattr(self, "_rag") and folder_path and os.path.isdir(folder_path):
+            self._rag.build_index_async(folder_path)
+            self.status_label.config(text="RAG: indexing project…")
+            self.root.after(3000, lambda: self.status_label.config(text="Folder open — chat available") if self.status_label.cget("text") == "RAG: indexing project…" else None)
 
     def update_editor_ai_state(self):
         """Update the enabled/disabled state of editor and AI features based on whether a file is opened."""
         has_file_opened = self.controller.file_path is not None
+        has_folder_opened = bool(
+            hasattr(self, "file_explorer")
+            and self.file_explorer
+            and self.file_explorer.current_folder
+        )
 
         if has_file_opened:
             self.editor.config(state=tk.NORMAL)
             self.line_numbers.config(state=tk.NORMAL)
-
-            if hasattr(self, "chat_input"):
-                self.chat_input.config(state=tk.NORMAL)
-            if hasattr(self, "chat_send_btn"):
-                self.chat_send_btn.config(state=tk.NORMAL)
-            if hasattr(self, "chat_clear_btn"):
-                self.chat_clear_btn.config(state=tk.NORMAL)
-
-            if not self.status_label.cget("text").startswith("AI:"):
-                self.status_label.config(text="Ready")
         else:
             self.editor.config(state=tk.DISABLED)
             self.line_numbers.config(state=tk.DISABLED)
 
-            if hasattr(self, "chat_input"):
-                self.chat_input.config(state=tk.DISABLED)
-            if hasattr(self, "chat_send_btn"):
-                self.chat_send_btn.config(state=tk.DISABLED)
-            if hasattr(self, "chat_clear_btn"):
-                self.chat_clear_btn.config(state=tk.DISABLED)
+        # Chat is available whenever a file OR a folder is open
+        chat_available = has_file_opened or has_folder_opened
+        if hasattr(self, "chat_input"):
+            self.chat_input.config(state=tk.NORMAL if chat_available else tk.DISABLED)
+        if hasattr(self, "chat_send_btn"):
+            self.chat_send_btn.config(state=tk.NORMAL if chat_available else tk.DISABLED)
+        if hasattr(self, "chat_clear_btn"):
+            self.chat_clear_btn.config(state=tk.NORMAL if chat_available else tk.DISABLED)
 
-            self.status_label.config(
-                text="Open a file from the explorer to start coding"
-            )
+        if not self.status_label.cget("text").startswith("AI:"):
+            if has_file_opened:
+                self.status_label.config(text="Ready")
+            elif has_folder_opened:
+                self.status_label.config(text="Folder open — chat available")
+            else:
+                self.status_label.config(
+                    text="Open a file or folder from the explorer to start"
+                )
 
     def load_languages_async(self):
         try:
