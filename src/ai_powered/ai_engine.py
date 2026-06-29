@@ -44,6 +44,8 @@ DEFAULT_SYSTEM_PROMPT = (
     "Never answer with meta-instructions like 'XML tags must be well-formed' or 'Propose the changes'; emit the actual <skill> blocks instead. "
     "INCLUDE ALL IMPORTS your code needs. Never use a library without importing it first. "
     "The project uses tkinter for GUI; import ttk as: from tkinter import ttk. "
+    "BEFORE emitting any code, mentally review it: verify imports are complete, logic is correct, "
+    "there are no obvious bugs, and the code actually runs end-to-end. Only emit the skill blocks after this review. "
     "Be thorough and complete — write real, working code, not simplified examples."
 )
 

@@ -14,7 +14,7 @@ SETTINGS_KEYS = {
 }
 
 DEFAULTS = {
-    "file_scope": "open_file",
+    "file_scope": "workspace",
     "web_search": False,
     "reasoning": False,
     "explain_actions": False,
@@ -76,13 +76,10 @@ class AISkillSettings:
         self.settings_manager.set(SETTINGS_KEYS[key], value)
 
     def is_workspace_scope(self):
-        return self.get("file_scope") == "workspace"
+        return True
 
     def active_count(self):
-        count = sum(1 for key, _ in SKILL_TOGGLE_LABELS if self.get(key))
-        if self.is_workspace_scope():
-            count += 1
-        return count
+        return sum(1 for key, _ in SKILL_TOGGLE_LABELS if self.get(key))
 
     def get_active_skills_list(self) -> list:
         """Return a list of (key, label) for all currently active skills."""
